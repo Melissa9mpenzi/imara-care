@@ -1,28 +1,92 @@
+@import url("https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&family=Quicksand:wght@600;700&display=swap");
+
 :root {
+  /* Brand */
+  --primary: #2e7d7d;
+  --primary-hover: #236363;
+  --primary-light: #5aa7a7;
+  --primary-soft: #96d7c6;
+  --primary-wash: #eef8f6;
+  --secondary: #1f3a5f;
+  --secondary-mid: #6c8cbf;
+  --sky: #78aac3;
+  --sky-soft: #b2dae5;
+
+  /* Warm accents */
+  --warm-yellow: #f3cd86;
+  --warm-coral: #f5a281;
+  --lime: #bac94a;
+
+  /* Neutrals */
+  --text: #0f172a;
+  --text-muted: #475569;
+  --border: #e2e8f0;
+  --surface: #f8fafc;
+  --white: #ffffff;
+
+  /* Status */
+  --success: #15803d;
+  --success-bg: #dcfce7;
+  --warning: #b45309;
+  --warning-bg: #fef3c7;
+  --danger: #b91c1c;
+  --danger-bg: #fee2e2;
+  --info: #0369a1;
+  --info-bg: #e0f2fe;
+
+  /* Triage priority */
+  --priority-emergency: var(--danger);
+  --priority-urgent: var(--warning);
+  --priority-routine: var(--success);
+
+  /* Typography */
+  --font-quicksand: "Quicksand";
+  --font-nunito: "Nunito";
+  --font-heading: var(--font-quicksand), "Quicksand", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: var(--font-nunito), "Nunito", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --text-base: 1rem;
+  --radius: 12px;
+  --focus-ring: 0 0 0 3px rgba(46, 125, 125, 0.35);
+
+  /* Existing component aliases */
+  --ink: var(--text);
+  --muted: var(--text-muted);
+  --line: var(--border);
+  --canvas: var(--surface);
+  --green: var(--primary);
+  --green-dark: var(--secondary);
+  --green-soft: var(--primary-wash);
   color-scheme: light;
-  --ink: #172a26;
-  --muted: #788985;
-  --line: #e8eeeb;
-  --canvas: #f7f9f8;
-  --green: #187c65;
-  --green-dark: #0e312b;
-  --green-soft: #e7f4ef;
 }
 
 * { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
 
 body {
   margin: 0;
   background: var(--canvas);
   color: var(--ink);
-  font-family: Arial, Helvetica, sans-serif;
-  font-size: 14px;
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
 }
 
-button, input, select, textarea { font: inherit; }
+button, input, select, textarea { font-family: var(--font-body); font-size: var(--text-base); }
 button { cursor: pointer; }
 button:disabled { cursor: wait; opacity: .7; }
+h1, h2, h3, h4, h5, h6, .font-heading {
+  color: var(--secondary);
+  font-family: var(--font-heading);
+  font-weight: 700;
+  line-height: 1.25;
+}
+h4, h5, h6 { font-weight: 600; }
+table, .numeric, .money, .vitals { font-variant-numeric: tabular-nums; }
+a { color: var(--primary); }
+a:hover { color: var(--primary-hover); }
+:focus-visible { box-shadow: var(--focus-ring); outline: none; }
 
 .app-shell { display: flex; min-height: 100vh; }
 .sidebar {
@@ -324,4 +388,218 @@ h2 { color: #233832; font-size: 14px; margin: 0; }
   .app-shell, .main-area { display: block; }
   .content-area { padding: 0; }
   body { background: #fff; }
+}
+
+/* Clinical data stays readable; medication and measurement values are never tiny. */
+.brand-name, h1, h2, h3, h4, h5, h6, .font-heading {
+  color: var(--secondary);
+  font-family: var(--font-heading);
+}
+.brand-name { font-weight: 700; }
+.breadcrumb,
+.connection,
+.page-heading p,
+.eyebrow,
+.nav-item,
+.stat-copy > span,
+.panel-heading h3,
+.toolbar-title,
+.section-title-row p,
+.text-button,
+.quick-action strong,
+.quick-action small,
+.panel-subtitle,
+.form-note,
+.form-grid .optional {
+  font-size: 14px;
+}
+.eyebrow,
+.nav-label,
+.brand-caption,
+.facility-copy span {
+  font-size: 12px;
+}
+.stat-copy small { color: var(--text-muted); font-size: 13px; }
+.section-title-row h2,
+.panel-heading h3,
+.toolbar-title { font-size: 16px; }
+.table-person,
+.appointment-details,
+.department-name,
+.waiting-person,
+.quick-action > span:nth-child(2) { line-height: 1.4; }
+.button { font-size: 16px; }
+.small-outline,
+.small-primary,
+.status-pill { font-size: 14px; }
+.panel,
+.stat-card,
+.topbar,
+.modal-card { border-color: var(--border); }
+.topbar { border-bottom-color: var(--border); }
+.breadcrumb { color: var(--text-muted); }
+.breadcrumb strong,
+.stat-copy strong,
+.panel-heading h3,
+.toolbar-title,
+.quick-action strong,
+.table-person strong,
+.appointment-details strong,
+.waiting-person strong,
+.department-name strong,
+.queue-reason strong,
+.schedule-department { color: var(--secondary); }
+.button-quiet,
+.small-outline { border-color: var(--border); }
+.connection.online { color: var(--success); }
+.connection.offline { color: var(--danger); }
+.stat-icon.icon-green { background: var(--success-bg); color: var(--success); }
+.stat-icon.icon-blue { background: var(--info-bg); color: var(--info); }
+.stat-icon.icon-orange { background: var(--warning-bg); color: var(--warning); }
+.stat-icon.icon-purple { background: #eef2ff; color: var(--secondary-mid); }
+.data-table th { color: var(--text-muted); font-size: 14px; }
+.data-table td,
+.data-table .table-person strong,
+.data-table .table-person small,
+.schedule-person strong,
+.schedule-person small,
+.queue-person strong,
+.queue-person small,
+.queue-reason strong,
+.queue-reason span,
+.department-name strong,
+.department-name span,
+.appointment-details strong,
+.appointment-details span,
+.waiting-person strong,
+.waiting-person span,
+.schedule-department,
+.schedule-department small,
+.queue-arrival,
+.queue-arrival span {
+  font-size: 14px;
+}
+.form-grid label { color: var(--text-muted); font-size: 14px; }
+.form-grid label input,
+.form-grid label select,
+.form-grid label textarea,
+.search-field input,
+.filter-select {
+  font-size: var(--text-base);
+}
+.button,
+.small-outline,
+.small-primary,
+.status-pill {
+  font-size: 14px;
+}
+.panel-subtitle,
+.form-note,
+.form-grid .optional {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.sidebar { background: var(--secondary); }
+.brand-mark { background: var(--primary-wash); color: var(--primary); }
+.brand-name span { color: var(--primary-soft); }
+.facility-switch { background: #294565; border-color: #3a5575; border-radius: var(--radius); }
+.facility-icon { background: var(--primary-soft); color: var(--secondary); }
+.facility-copy span,
+.brand-caption,
+.nav-label,
+.sidebar-help span,
+.user-copy span { color: #c3d0df; }
+.nav-item.active { background: var(--primary-wash); color: var(--primary-hover); }
+.nav-item:hover { background: #294565; }
+.nav-count { background: var(--primary-soft); color: var(--secondary); }
+.topbar, .panel, .stat-card, .modal-card { background: var(--white); }
+.button-primary { background: var(--primary); color: #fff; }
+.button-primary:hover { background: var(--primary-hover); }
+.button-quiet { border-color: var(--border); color: var(--secondary); }
+.button-quiet:hover { background: var(--primary-wash); border-color: var(--primary-soft); }
+.live-tag { background: var(--success-bg); color: var(--success); }
+.live-tag i, .connection-dot { background: var(--success); }
+.status-confirmed { background: var(--success-bg); color: var(--success); }
+.status-booked { background: var(--info-bg); color: var(--info); }
+.status-cancelled, .status-no_show { background: var(--danger-bg); color: var(--danger); }
+.status-completed { background: var(--border); color: var(--text-muted); }
+.priority-emergency { background: var(--danger-bg); color: var(--priority-emergency); }
+.priority-urgent { background: var(--warning-bg); color: var(--priority-urgent); }
+.priority-label i { background: var(--priority-routine); }
+.priority-label.priority-text-urgent i { background: var(--priority-urgent); }
+.priority-label.priority-text-emergency i { background: var(--priority-emergency); }
+.queue-chip { background: var(--primary-wash); color: var(--primary-hover); }
+.payment-tag { background: var(--primary-wash); color: var(--secondary); }
+.allergy-tag { background: var(--warning-bg); color: var(--warning); }
+.quick-green { background: var(--success-bg); color: var(--success); }
+.quick-blue { background: var(--info-bg); color: var(--info); }
+.quick-purple { background: #eef2ff; color: var(--secondary-mid); }
+.quick-orange { background: var(--warning-bg); color: var(--warning); }
+.alert-error { background: var(--danger-bg); border-color: #fecaca; color: var(--danger); }
+.alert-success { background: var(--success-bg); border-color: #bbf7d0; color: var(--success); }
+.form-grid label input:focus,
+.form-grid label select:focus,
+.form-grid label textarea:focus,
+.search-field:focus-within { border-color: var(--primary); box-shadow: var(--focus-ring); }
+.check-label input { accent-color: var(--primary); }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #e2e8f0;
+    --text-muted: #94a3b8;
+    --border: #1e293b;
+    --surface: #0b1220;
+    --white: #111827;
+    --primary: #5aa7a7;
+    --primary-hover: #7bc0be;
+    --primary-wash: #10201f;
+    --secondary: #b2dae5;
+    color-scheme: dark;
+  }
+  .sidebar { background: #101b2c; }
+  .facility-switch { background: #17263b; border-color: #2a3d55; }
+  .nav-item.active { background: #173a3a; color: var(--primary-hover); }
+  .nav-item:hover { background: #1b2c43; }
+  .topbar, .panel, .stat-card, .modal-card { background: var(--white); border-color: var(--border); }
+  .button-quiet, .small-outline, .filter-select, .form-grid label input,
+  .form-grid label select, .form-grid label textarea, .search-field {
+    background: #111827;
+    border-color: var(--border);
+    color: var(--text);
+  }
+  .panel-heading, .department-row, .appointment-row, .waiting-row,
+  .quick-action, .schedule-row, .queue-list-row, .data-table td,
+  .modal-heading, .modal-footer { border-color: var(--border); }
+  .quick-action { background: var(--white); }
+  .quick-action:hover, .button-quiet:hover { background: #17263b; }
+  .appointment-details strong, .waiting-person strong, .department-name strong,
+  .schedule-person strong, .queue-reason strong, .breadcrumb strong,
+  .stat-copy strong, .panel-heading h3, h1, h2, h3, h4, h5, h6 {
+    color: var(--text);
+  }
+  .stat-icon, .department-badge, .person-avatar, .schedule-date {
+    background: #1b2c43;
+    color: var(--primary-soft);
+  }
+  .status-booked { background: #142a3b; color: #7dd3fc; }
+  .status-confirmed { background: #143222; color: #86efac; }
+  .status-cancelled, .status-no_show { background: #3a1c24; color: #fca5a5; }
+  .status-completed { background: #1e293b; color: var(--text-muted); }
+  .priority-emergency { background: #3a1c24; color: #fca5a5; }
+  .priority-urgent { background: #382d17; color: #fcd34d; }
+  .payment-tag, .queue-chip { background: #173a3a; color: var(--primary-soft); }
+  .allergy-tag { background: #382d17; color: #fcd34d; }
+  .live-tag, .quick-green { background: #143222; color: #86efac; }
+  .quick-blue { background: #142a3b; color: #7dd3fc; }
+  .quick-purple { background: #27213c; color: #c4b5fd; }
+  .quick-orange { background: #382d17; color: #fcd34d; }
+  .data-table th { background: #111827; color: var(--text-muted); }
+  .empty-state, .muted, .panel-subtitle, .form-note, .optional { color: var(--text-muted); }
+}
+
+@media print {
+  body { background: #fff; color: #000; font-size: 12pt; }
+  h1, h2, h3, h4 { color: #000; }
+  .no-print { display: none !important; }
 }
