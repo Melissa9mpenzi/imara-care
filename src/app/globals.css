@@ -2,11 +2,11 @@
 
 :root {
   /* Brand */
-  --primary: #2e7d7d;
-  --primary-hover: #236363;
-  --primary-light: #5aa7a7;
-  --primary-soft: #96d7c6;
-  --primary-wash: #eef8f6;
+  --primary: #317f76;
+  --primary-hover: #28766f;
+  --primary-light: #67b4a8;
+  --primary-soft: #a9e0d1;
+  --primary-wash: #eff8f5;
   --secondary: #1f3a5f;
   --secondary-mid: #6c8cbf;
   --sky: #78aac3;
@@ -46,7 +46,7 @@
   --font-body: var(--font-nunito), "Nunito", system-ui, -apple-system, "Segoe UI", sans-serif;
   --text-base: 1rem;
   --radius: 12px;
-  --focus-ring: 0 0 0 3px rgba(46, 125, 125, 0.35);
+  --focus-ring: 0 0 0 3px rgba(49, 127, 118, 0.25);
 
   /* Existing component aliases */
   --ink: var(--text);
@@ -153,8 +153,8 @@ h1 { color: #1d312c; font-size: 25px; letter-spacing: -.5px; line-height: 1.25; 
 .page-heading p { color: #82908c; font-size: 11px; margin: 7px 0 0; }
 .heading-actions { display: flex; gap: 9px; }
 .button { align-items: center; border: 1px solid transparent; border-radius: 7px; display: inline-flex; font-size: 11px; font-weight: 700; gap: 8px; justify-content: center; min-height: 36px; padding: 0 13px; transition: background .15s, border .15s; }
-.button-primary { background: #167a63; color: #fff; }
-.button-primary:hover { background: #126a56; }
+.button-primary { background: var(--primary-soft); color: var(--secondary); }
+.button-primary:hover { background: #8fd4c2; }
 .button-quiet { background: #fff; border-color: #dfe8e3; color: #41554e; }
 .button-quiet:hover { background: #f4f8f6; border-color: #bfd6ca; }
 .button-plus { font-size: 18px; font-weight: 400; line-height: 12px; }
@@ -639,16 +639,16 @@ h2 { color: #233832; font-size: 14px; margin: 0; }
 .auth-form input:focus-visible, .auth-form select:focus-visible,
 .invitation-result input:focus-visible { box-shadow: var(--focus-ring); outline: none; }
 .primary-button {
-  background: var(--primary);
+  background: var(--primary-soft);
   border: 0;
   border-radius: 9px;
-  color: #fff;
+  color: var(--secondary);
   font-weight: 800;
   margin-top: 12px;
   min-height: 46px;
   padding: 10px 16px;
 }
-.primary-button:hover { background: var(--primary-hover); }
+.primary-button:hover { background: #8fd4c2; }
 .primary-button:disabled { cursor: wait; opacity: .7; }
 .auth-error { color: var(--danger); font-weight: 700; margin: 4px 0; }
 .auth-footnote { border-top: 1px solid var(--border); color: var(--text-muted); font-size: 13px; margin: 22px 0 0; padding-top: 18px; }
