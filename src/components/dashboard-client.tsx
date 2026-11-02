@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
+import { authClient } from "@/lib/auth-client";
 import { api } from "@/lib/api";
 import type {
   Appointment,
@@ -59,6 +60,7 @@ function ageLabel(patient: Patient) {
 }
 
 export default function DashboardClient() {
+  const { data: session } = authClient.useSession();
   const [section, setSection] = useState<Section>("overview");
   const [modal, setModal] = useState<Modal>(null);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
@@ -316,6 +318,10 @@ export default function DashboardClient() {
         </nav>
 
         <div className="sidebar-spacer" />
+        <a className="nav-item staff-invite-link" href="/staff-invitations">
+          <span className="nav-icon">+</span>
+          <span>Invite staff</span>
+        </a>
         <div className="sidebar-help">
           <div className="help-mark">?</div>
           <div>
@@ -325,12 +331,26 @@ export default function DashboardClient() {
           <span className="chevron">›</span>
         </div>
         <div className="user-profile">
-          <div className="avatar">FM</div>
-          <div className="user-copy">
-            <strong>Facility Manager</strong>
-            <span>Administrator</span>
+          <div className="avatar">
+            {(session?.user.name ?? "Staff")
+              .split(/\s+/)
+              .map((part) => part[0])
+              .join("")
+              .slice(0, 2)
+              .toUpperCase()}
           </div>
-          <button className="icon-button" aria-label="User menu">···</button>
+          <div className="user-copy">
+            <strong>{session?.user.name ?? "Staff member"}</strong>
+            <span>{session?.user.role === "admin" ? "Administrator" : "Staff"}</span>
+          </div>
+          <button
+            className="icon-button"
+            aria-label="Sign out"
+            title="Sign out"
+            onClick={() => void authClient.signOut().then(() => window.location.assign("/login"))}
+          >
+            ⇥
+          </button>
         </div>
       </aside>
 
@@ -348,7 +368,14 @@ export default function DashboardClient() {
               <span className="bell-shape">◔</span>
               <i />
             </button>
-            <div className="topbar-avatar">FM</div>
+            <div className="topbar-avatar">
+              {(session?.user.name ?? "Staff")
+                .split(/\s+/)
+                .map((part) => part[0])
+                .join("")
+                .slice(0, 2)
+                .toUpperCase()}
+            </div>
           </div>
         </header>
 

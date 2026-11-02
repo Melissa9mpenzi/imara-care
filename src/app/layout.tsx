@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   description: "A connected workspace for patient care and hospital operations.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <head>

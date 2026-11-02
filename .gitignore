@@ -19,6 +19,7 @@
 
 # production
 /build
+/imara-care-auth.db*
 
 # misc
 .DS_Store

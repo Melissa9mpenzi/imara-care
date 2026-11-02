@@ -1,3 +1,5 @@
+import { authClient } from "@/lib/auth-client";
+
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 
@@ -80,12 +82,18 @@ export interface DashboardData {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const { data: authData, error: authError } = await authClient.token();
+  if (authError || !authData?.token) {
+    throw new Error("Your session has expired. Sign in again to continue.");
+  }
+
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
       ...init,
       headers: {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${authData.token}`,
         ...init?.headers,
       },
       cache: "no-store",

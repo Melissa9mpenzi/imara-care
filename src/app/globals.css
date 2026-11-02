@@ -603,3 +603,66 @@ h2 { color: #233832; font-size: 14px; margin: 0; }
   h1, h2, h3, h4 { color: #000; }
   .no-print { display: none !important; }
 }
+
+.auth-page {
+  align-items: center;
+  background:
+    radial-gradient(circle at 15% 15%, var(--primary-wash), transparent 34rem),
+    var(--surface);
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 28px 16px;
+}
+.auth-card {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: 0 18px 55px rgba(31, 58, 95, .09);
+  max-width: 440px;
+  padding: 36px;
+  width: 100%;
+}
+.auth-card h1 { font-size: 28px; margin-bottom: 10px; }
+.auth-card > p { color: var(--text-muted); margin: 0 0 24px; }
+.auth-form { display: flex; flex-direction: column; gap: 10px; }
+.auth-form label, .invitation-result label { color: var(--text); font-weight: 700; margin-top: 8px; }
+.auth-form input, .auth-form select, .invitation-result input {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  min-height: 46px;
+  padding: 10px 12px;
+  width: 100%;
+}
+.auth-form input:focus-visible, .auth-form select:focus-visible,
+.invitation-result input:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+.primary-button {
+  background: var(--primary);
+  border: 0;
+  border-radius: 9px;
+  color: #fff;
+  font-weight: 800;
+  margin-top: 12px;
+  min-height: 46px;
+  padding: 10px 16px;
+}
+.primary-button:hover { background: var(--primary-hover); }
+.primary-button:disabled { cursor: wait; opacity: .7; }
+.auth-error { color: var(--danger); font-weight: 700; margin: 4px 0; }
+.auth-footnote { border-top: 1px solid var(--border); color: var(--text-muted); font-size: 13px; margin: 22px 0 0; padding-top: 18px; }
+.password-field { align-items: center; display: flex; gap: 8px; }
+.password-field input { flex: 1; min-width: 0; }
+.text-button, .back-link { background: none; border: 0; color: var(--primary); font-weight: 700; padding: 8px 0; }
+.back-link { display: inline-block; margin-bottom: 25px; text-decoration: none; }
+.password-checklist { color: var(--text-muted); font-size: 13px; margin: 2px 0 8px; padding-left: 20px; }
+.password-checklist li { margin: 4px 0; }
+.invitation-card { max-width: 520px; }
+.invitation-result { background: var(--primary-wash); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; gap: 8px; margin-top: 20px; padding: 16px; }
+.invitation-result span { color: var(--text-muted); font-size: 13px; }
+.staff-invite-link { margin: 0 2px 22px; text-decoration: none; }
+
+@media (max-width: 540px) {
+  .auth-card { padding: 28px 22px; }
+}
