@@ -4,7 +4,7 @@ import { hash, verify } from "@node-rs/argon2";
 import Database from "better-sqlite3";
 import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
-import { admin, jwt } from "better-auth/plugins";
+import { admin, jwt, twoFactor } from "better-auth/plugins";
 import { loadEnvConfig } from "@next/env";
 
 loadEnvConfig(process.cwd());
@@ -41,6 +41,10 @@ authDatabase.exec(`
     failure_count INTEGER NOT NULL,
     window_started_at TEXT NOT NULL,
     locked_until TEXT
+  );
+  CREATE TABLE IF NOT EXISTS auth_mfa_setup_pending (
+    user_id TEXT PRIMARY KEY,
+    started_at TEXT NOT NULL
   );
 `);
 
@@ -92,6 +96,17 @@ export function recordAuthAudit(
 
 const facilityId = process.env.IMARA_FACILITY_ID ?? "IM";
 const loginWindowMilliseconds = 15 * 60 * 1000;
+const mfaRequiredRoles = new Set([
+  "admin",
+  "facility_admin",
+  "medical_director",
+  "clinician",
+  "pharmacist",
+]);
+
+export function requiresMfa(role: unknown) {
+  return typeof role === "string" && mfaRequiredRoles.has(role);
+}
 
 function normalizedEmail(value: unknown) {
     return typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -195,11 +210,58 @@ export const auth = betterAuth({
       staffRole: { type: "string", required: false, input: false },
     },
   },
+  databaseHooks: {
+    user: {
+      create: {
+        before: async (user, context) => {
+          if (context?.path !== "/sign-up/email") return;
+          const token = context.request?.headers.get("x-imara-invite-token");
+          const invitation = token ? findActiveInvitation(token) : undefined;
+          if (!invitation || normalizedEmail(user.email) !== invitation.email) return false;
+          return {
+            data: {
+              ...user,
+              emailVerified: true,
+              facilityId: invitation.facilityId,
+              staffRole: invitation.staffRole,
+            },
+          };
+        },
+      },
+    },
+  },
   session: {
     expiresIn: 15 * 60,
     updateAge: 60,
     cookieCache: { enabled: false },
   },
+  plugins: [
+    admin(),
+    twoFactor({
+      issuer: "IMARA-CARE",
+      totpOptions: { digits: 6, period: 30 },
+      backupCodeOptions: {
+        amount: 10,
+        length: 10,
+        storeBackupCodes: "encrypted",
+      },
+      accountLockout: {
+        enabled: true,
+        maxFailedAttempts: 5,
+        durationSeconds: 15 * 60,
+      },
+    }),
+    jwt({
+      jwt: {
+        definePayload: ({ user }) => ({
+          sub: user.id,
+          facilityId: user.facilityId ?? facilityId,
+          staffRole: user.staffRole ?? user.role ?? "staff",
+          mfa: user.twoFactorEnabled === true,
+        }),
+      },
+    }),
+  ],
   advanced: {
     useSecureCookies: process.env.NODE_ENV === "production",
   },
@@ -213,6 +275,17 @@ export const auth = betterAuth({
   },
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path === "/two-factor/disable") {
+        const session = ctx.headers
+          ? await auth.api.getSession({ headers: ctx.headers })
+          : null;
+        if (session && requiresMfa(session.user.staffRole ?? session.user.role)) {
+          throw new APIError("FORBIDDEN", {
+            message: "Authenticator MFA is required for this staff role.",
+          });
+        }
+      }
+
       if (ctx.path === "/sign-in/email") {
         const email = normalizedEmail(ctx.body?.email);
         if (!email) return;
@@ -258,12 +331,6 @@ export const auth = betterAuth({
           body: {
             ...ctx.body,
             name: invitation.fullName,
-            data: {
-              ...ctx.body.data,
-              emailVerified: true,
-              facilityId: invitation.facilityId,
-              staffRole: invitation.staffRole,
-            },
           },
         },
       };
@@ -291,33 +358,75 @@ export const auth = betterAuth({
       if (ctx.path === "/sign-in/email") {
         const session = ctx.context.newSession;
         const email = normalizedEmail(ctx.body?.email);
+        const response = ctx.context.returned;
+        const twoFactorChallenge =
+          typeof response === "object" &&
+          response !== null &&
+          "twoFactorRedirect" in response &&
+          response.twoFactorRedirect === true;
         if (email && session) {
           authDatabase
             .prepare("DELETE FROM auth_login_limits WHERE email_hash = ?")
             .run(emailHash(email));
-        } else if (email) {
+        } else if (email && !twoFactorChallenge) {
           recordFailedLogin(email);
         }
-        recordAuthAudit(session ? "login.success" : "login.failed", {
+        recordAuthAudit(
+          twoFactorChallenge
+            ? "mfa.challenge"
+            : session
+              ? "login.success"
+              : "login.failed",
+          {
           actorUserId: session?.user.id,
           facilityId: session?.user.facilityId,
           email: ctx.body?.email,
-        });
+          },
+        );
+      }
+
+      if (
+        ctx.path === "/two-factor/verify-totp" ||
+        ctx.path === "/two-factor/verify-backup-code"
+      ) {
+        const response = ctx.context.returned;
+        if (
+          typeof response === "object" &&
+          response !== null &&
+          "user" in response &&
+          typeof response.user === "object" &&
+          response.user !== null &&
+          "id" in response.user &&
+          typeof response.user.id === "string"
+        ) {
+          const userId = response.user.id;
+          const pendingSetup =
+            ctx.path === "/two-factor/verify-totp" &&
+            authDatabase
+              .prepare("SELECT user_id FROM auth_mfa_setup_pending WHERE user_id = ?")
+              .get(userId);
+          if (pendingSetup) {
+            authDatabase
+              .prepare("DELETE FROM auth_mfa_setup_pending WHERE user_id = ?")
+              .run(userId);
+            recordAuthAudit("mfa.enabled", { actorUserId: userId, facilityId });
+          } else {
+            recordAuthAudit("login.success", { actorUserId: userId, facilityId });
+          }
+        }
+      }
+
+      if (ctx.path === "/two-factor/enable" && ctx.context.session) {
+        authDatabase
+          .prepare(
+            `INSERT INTO auth_mfa_setup_pending (user_id, started_at)
+             VALUES (?, ?)
+             ON CONFLICT(user_id) DO UPDATE SET started_at = excluded.started_at`,
+          )
+          .run(ctx.context.session.user.id, new Date().toISOString());
       }
     }),
   },
-  plugins: [
-    admin(),
-    jwt({
-      jwt: {
-        definePayload: ({ user }) => ({
-          sub: user.id,
-          facilityId: user.facilityId ?? facilityId,
-          staffRole: user.staffRole ?? user.role ?? "staff",
-        }),
-      },
-    }),
-  ],
 });
 
 export { authDatabase };

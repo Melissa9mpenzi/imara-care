@@ -318,6 +318,10 @@ export default function DashboardClient() {
         </nav>
 
         <div className="sidebar-spacer" />
+        <a className="nav-item staff-invite-link" href="/security/two-factor">
+          <span className="nav-icon">2F</span>
+          <span>My security</span>
+        </a>
         <a className="nav-item staff-invite-link" href="/staff-invitations">
           <span className="nav-icon">+</span>
           <span>Invite staff</span>

@@ -2,7 +2,13 @@ import { randomBytes, randomUUID } from "node:crypto";
 import nodemailer from "nodemailer";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { auth, authDatabase, invitationTokenHash, recordAuthAudit } from "@/lib/auth";
+import {
+  auth,
+  authDatabase,
+  invitationTokenHash,
+  recordAuthAudit,
+  requiresMfa,
+} from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -57,6 +63,15 @@ export async function POST(request: Request) {
   }
   if (session.user.role !== "admin" && session.user.staffRole !== "facility_admin") {
     return NextResponse.json({ detail: "Administrator access is required." }, { status: 403 });
+  }
+  if (
+    requiresMfa(session.user.staffRole ?? session.user.role) &&
+    session.user.twoFactorEnabled !== true
+  ) {
+    return NextResponse.json(
+      { detail: "Set up an authenticator before managing staff invitations." },
+      { status: 403 },
+    );
   }
 
   const body: unknown = await request.json().catch(() => null);
@@ -163,6 +178,15 @@ export async function DELETE(request: Request) {
   }
   if (session.user.role !== "admin" && session.user.staffRole !== "facility_admin") {
     return NextResponse.json({ detail: "Administrator access is required." }, { status: 403 });
+  }
+  if (
+    requiresMfa(session.user.staffRole ?? session.user.role) &&
+    session.user.twoFactorEnabled !== true
+  ) {
+    return NextResponse.json(
+      { detail: "Set up an authenticator before managing staff invitations." },
+      { status: 403 },
+    );
   }
 
   const body: unknown = await request.json().catch(() => null);

@@ -24,6 +24,15 @@ export default function LoginForm() {
         setError("That email or password did not work. Try again or contact your administrator.");
         return;
       }
+      const response = result.data;
+      if (
+        typeof response === "object" &&
+        response !== null &&
+        "twoFactorRedirect" in response &&
+        response.twoFactorRedirect === true
+      ) {
+        return;
+      }
       router.replace("/");
       router.refresh();
     } catch {
