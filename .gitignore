@@ -20,6 +20,7 @@
 # production
 /build
 /imara-care-auth.db*
+/generated/prisma/
 
 # misc
 .DS_Store

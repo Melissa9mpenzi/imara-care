@@ -1,0 +1,322 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Facility {
+  id                String            @id @default(uuid()) @db.VarChar(36)
+  name              String            @db.VarChar(160)
+  slug              String            @unique @db.VarChar(80)
+  code              String            @unique @db.VarChar(12)
+  status            String            @default("active") @db.VarChar(20)
+  settings          Json              @default("{}") @db.JsonB
+  currency          String            @default("UGX") @db.VarChar(3)
+  timezone          String            @default("Africa/Kampala") @db.VarChar(64)
+  nextPatientNumber Int               @default(1) @map("next_patient_number")
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  users             User[]
+  invitations       Invitation[]
+  sessions          Session[]
+  roles             Role[]
+  loginEvents       LoginEvent[]
+  termsAcceptances  TermsAcceptance[]
+  auditLogs         AuditLog[]
+
+  @@map("facilities")
+}
+
+model User {
+  id                 String            @id @default(cuid())
+  name               String            @db.VarChar(160)
+  email              String            @unique @db.VarChar(254)
+  emailVerified      Boolean           @default(false)
+  image              String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  role               String            @default("user") @db.VarChar(40)
+  banned             Boolean           @default(false)
+  banReason          String?
+  banExpires         DateTime?
+  facilityId         String?           @db.VarChar(12)
+  staffRole          String?           @db.VarChar(40)
+  twoFactorEnabled   Boolean           @default(false)
+  status             String            @default("invited") @db.VarChar(24)
+  phone              String?           @db.VarChar(32)
+  staffNumber        String?           @db.VarChar(64)
+  failedLogins       Int               @default(0)
+  lockedUntil        DateTime?
+  lastLoginAt        DateTime?
+  facility           Facility?         @relation(fields: [facilityId], references: [code], onDelete: SetNull)
+  sessions           Session[]
+  accounts           Account[]
+  twoFactor          TwoFactor?
+  passkeys           Passkey[]
+  userRoles          UserRole[]
+  invitations        Invitation[]      @relation("InvitedUser")
+  createdInvitations Invitation[]      @relation("InvitationCreator")
+  passwordResets     PasswordReset[]
+  recoveryCodes      RecoveryCode[]
+  trustedDevices     TrustedDevice[]
+  loginEvents        LoginEvent[]
+  termsAcceptances   TermsAcceptance[]
+  auditLogs          AuditLog[]
+
+  @@index([facilityId, status])
+  @@map("user")
+}
+
+model Session {
+  id             String    @id
+  expiresAt      DateTime
+  token          String    @unique @db.VarChar(255)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  ipAddress      String?   @db.VarChar(64)
+  userAgent      String?   @db.Text
+  userId         String
+  impersonatedBy String?
+  facilityId     String?   @db.VarChar(12)
+  lastSeenAt     DateTime  @default(now()) @db.Timestamptz(6)
+  mfaVerifiedAt  DateTime? @db.Timestamptz(6)
+  stepUpUntil    DateTime? @db.Timestamptz(6)
+  revokedAt      DateTime? @db.Timestamptz(6)
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  facility       Facility? @relation(fields: [facilityId], references: [code], onDelete: SetNull)
+
+  @@index([userId, expiresAt])
+  @@index([facilityId, revokedAt])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String    @db.VarChar(255)
+  providerId            String    @db.VarChar(100)
+  userId                String
+  accessToken           String?   @db.Text
+  refreshToken          String?   @db.Text
+  idToken               String?   @db.Text
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?   @db.Text
+  password              String?   @db.Text
+  emailAtLink           String?   @db.VarChar(254)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String   @db.VarChar(255)
+  value      String   @db.Text
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+model Jwks {
+  id         String    @id
+  publicKey  String    @db.Text
+  privateKey String    @db.Text
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime?
+  alg        String?   @db.VarChar(32)
+  crv        String?   @db.VarChar(32)
+
+  @@map("jwks")
+}
+
+model TwoFactor {
+  id                      String    @id
+  secret                  String    @db.Text
+  backupCodes             String    @db.Text
+  userId                  String    @unique
+  verified                Boolean   @default(false)
+  failedVerificationCount Int       @default(0)
+  lockedUntil             DateTime?
+  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("twoFactor")
+}
+
+model Invitation {
+  id         String    @id @default(uuid())
+  userId     String?
+  tokenHash  String    @unique @db.VarChar(64)
+  email      String    @db.VarChar(254)
+  fullName   String    @db.VarChar(160)
+  staffRole  String    @db.VarChar(40)
+  facilityId String    @db.VarChar(12)
+  createdBy  String
+  createdAt  DateTime  @default(now()) @db.Timestamptz(6)
+  expiresAt  DateTime  @db.Timestamptz(6)
+  usedAt     DateTime? @db.Timestamptz(6)
+  revokedAt  DateTime? @db.Timestamptz(6)
+  facility   Facility  @relation(fields: [facilityId], references: [code], onDelete: Cascade)
+  user       User?     @relation("InvitedUser", fields: [userId], references: [id], onDelete: SetNull)
+  creator    User      @relation("InvitationCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+
+  @@index([facilityId, email, expiresAt])
+  @@index([userId, usedAt, revokedAt])
+  @@map("invitations")
+}
+
+model PasswordReset {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique @db.VarChar(64)
+  expiresAt DateTime  @db.Timestamptz(6)
+  usedAt    DateTime? @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("password_resets")
+}
+
+model RecoveryCode {
+  id        String    @id @default(uuid())
+  userId    String
+  codeHash  String    @db.VarChar(128)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  usedAt    DateTime? @db.Timestamptz(6)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt])
+  @@map("recovery_codes")
+}
+
+model Passkey {
+  id           String   @id @default(uuid())
+  name         String?  @db.VarChar(120)
+  publicKey    String   @db.Text
+  credentialID String   @unique @db.VarChar(512)
+  counter      BigInt   @default(0)
+  deviceType   String   @db.VarChar(32)
+  backedUp     Boolean  @default(false)
+  transports   String?  @db.Text
+  userId       String
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("passkeys")
+}
+
+model TrustedDevice {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique @db.VarChar(64)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  expiresAt DateTime @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("trusted_devices")
+}
+
+model LoginEvent {
+  id         String    @id @default(uuid())
+  facilityId String?   @db.VarChar(12)
+  userId     String?
+  emailTried String?   @db.VarChar(254)
+  method     String    @db.VarChar(32)
+  success    Boolean
+  reason     String?   @db.VarChar(160)
+  ip         String?   @db.VarChar(64)
+  userAgent  String?   @db.Text
+  createdAt  DateTime  @default(now()) @db.Timestamptz(6)
+  facility   Facility? @relation(fields: [facilityId], references: [code], onDelete: SetNull)
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([facilityId, createdAt])
+  @@index([userId, createdAt])
+  @@map("login_events")
+}
+
+model TermsAcceptance {
+  id         String    @id @default(uuid())
+  userId     String
+  facilityId String?   @db.VarChar(12)
+  version    String    @db.VarChar(40)
+  acceptedAt DateTime  @default(now()) @db.Timestamptz(6)
+  facility   Facility? @relation(fields: [facilityId], references: [code], onDelete: SetNull)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, acceptedAt])
+  @@map("terms_acceptances")
+}
+
+model Role {
+  id          String           @id @default(uuid())
+  facilityId  String?          @db.VarChar(12)
+  key         String           @db.VarChar(64)
+  name        String           @db.VarChar(100)
+  isSystem    Boolean          @default(false)
+  requiresMfa Boolean          @default(false)
+  facility    Facility?        @relation(fields: [facilityId], references: [code], onDelete: Cascade)
+  permissions RolePermission[]
+  users       UserRole[]
+
+  @@index([facilityId, key])
+  @@map("roles")
+}
+
+model Permission {
+  code        String           @id @db.VarChar(100)
+  description String           @db.VarChar(240)
+  roles       RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId         String
+  permissionCode String
+  role           Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission     Permission @relation(fields: [permissionCode], references: [code], onDelete: Restrict)
+
+  @@id([roleId, permissionCode])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId String
+  roleId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model AuditLog {
+  id         String    @id @default(uuid())
+  facilityId String?   @db.VarChar(12)
+  userId     String?
+  action     String    @db.VarChar(100)
+  entityType String?   @db.VarChar(80)
+  entityId   String?   @db.VarChar(100)
+  before     Json?     @db.JsonB
+  after      Json?     @db.JsonB
+  ip         String?   @db.VarChar(64)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(6)
+  facility   Facility? @relation(fields: [facilityId], references: [code], onDelete: SetNull)
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([facilityId, createdAt])
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}
