@@ -8,7 +8,7 @@ export async function GET(
   { params }: { params: Promise<{ token: string }> },
 ) {
   const { token } = await params;
-  const invitation = findActiveInvitation(token);
+  const invitation = await findActiveInvitation(token);
   if (!invitation) {
     return NextResponse.json({ detail: "Invitation unavailable." }, { status: 404 });
   }

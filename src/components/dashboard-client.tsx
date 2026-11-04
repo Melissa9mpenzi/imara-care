@@ -1,26 +1,98 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { authClient } from "@/lib/auth-client";
 import { api } from "@/lib/api";
 import type {
+  AppNotification,
   Appointment,
   DashboardData,
   Department,
   Patient,
   QueueItem,
+  Reminder,
 } from "@/lib/api";
 
-type Section = "overview" | "patients" | "appointments" | "queue";
-type Modal = "patient" | "appointment" | "checkin" | "triage" | null;
+type Section = "overview" | "patients" | "appointments" | "queue" | "reminders" | "notifications";
+type Modal = "patient" | "appointment" | "checkin" | "triage" | "reminder" | null;
 
-const navigation: { id: Section; label: string; short: string }[] = [
-  { id: "overview", label: "Overview", short: "O" },
-  { id: "patients", label: "Patients", short: "P" },
-  { id: "appointments", label: "Appointments", short: "A" },
-  { id: "queue", label: "Queue & triage", short: "Q" },
+type IconName =
+  | "overview"
+  | "patients"
+  | "appointments"
+  | "queue"
+  | "pharmacy"
+  | "laboratory"
+  | "billing"
+  | "theatre"
+  | "security"
+  | "staff"
+  | "notifications"
+  | "add"
+  | "search"
+  | "clock"
+  | "logout";
+
+const navigation: { id: Section; label: string; icon: IconName }[] = [
+  { id: "overview", label: "Overview", icon: "overview" },
+  { id: "patients", label: "Patients", icon: "patients" },
+  { id: "appointments", label: "Appointments", icon: "appointments" },
+  { id: "queue", label: "Queue & triage", icon: "queue" },
 ];
+
+const sectionLabels: Record<Section, string> = {
+  overview: "Overview",
+  patients: "Patients",
+  appointments: "Appointments",
+  queue: "Queue & triage",
+  reminders: "My reminders",
+  notifications: "Notifications",
+};
+
+const plannedModules: { label: string; icon: IconName }[] = [
+  { label: "Pharmacy", icon: "pharmacy" },
+  { label: "Laboratory", icon: "laboratory" },
+  { label: "Billing & insurance", icon: "billing" },
+  { label: "Theatre", icon: "theatre" },
+];
+
+function AppIcon({ name, size = 20 }: { name: IconName; size?: number }) {
+  const paths: Record<IconName, ReactNode> = {
+    overview: <><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" /></>,
+    patients: <><path d="M16 20v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 18.5V20" /><circle cx="10" cy="7.5" r="3.5" /><path d="M16 4.2a3.5 3.5 0 0 1 0 6.7M20 20v-1.5a3.5 3.5 0 0 0-2.7-3.4" /></>,
+    appointments: <><rect x="3.5" y="5" width="17" height="16" rx="2.5" /><path d="M7.5 3v4M16.5 3v4M3.5 10h17M8 14h3M8 17h6" /></>,
+    queue: <><path d="M3 12h4l3-7 4 14 3-7h4" /><circle cx="3" cy="12" r="1" /><circle cx="21" cy="12" r="1" /></>,
+    pharmacy: <><path d="m8 4 12 12a4.2 4.2 0 0 1-5.9 5.9l-12-12A4.2 4.2 0 0 1 8 4Z" /><path d="m7 13 6-6" /></>,
+    laboratory: <><path d="M9 3h6M10 3v7l-5.5 8.2A2.5 2.5 0 0 0 6.6 22h10.8a2.5 2.5 0 0 0 2.1-3.8L14 10V3M8 16h8" /></>,
+    billing: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18M7 15h4" /></>,
+    theatre: <><path d="M4 21V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v16M3 21h18M9 21v-5h6v5M12 7v5M9.5 9.5h5" /></>,
+    security: <><path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z" /><path d="m9 12 2 2 4-4" /></>,
+    staff: <><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="10" cy="7" r="4" /><path d="M20 8v6M17 11h6" /></>,
+    notifications: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" /></>,
+    add: <><path d="M12 5v14M5 12h14" /></>,
+    search: <><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 4.5 4.5" /></>,
+    clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+    logout: <><path d="M10 17l5-5-5-5M15 12H3" /><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" /></>,
+  };
+
+  return (
+    <svg
+      aria-hidden="true"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {paths[name]}
+    </svg>
+  );
+}
 
 function displayName(patient: Patient) {
   return [patient.first_name, patient.other_names, patient.last_name]
@@ -41,6 +113,20 @@ function formatDate(value: string) {
     day: "numeric",
     year: "numeric",
   }).format(new Date(value));
+}
+
+function formatRelativeTime(value: string) {
+  const minutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60000));
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  return `${Math.floor(hours / 24)} day ago`;
+}
+
+function localDateTimeValue(value: Date) {
+  const date = new Date(value.getTime() - value.getTimezoneOffset() * 60000);
+  return date.toISOString().slice(0, 16);
 }
 
 function ageLabel(patient: Patient) {
@@ -68,6 +154,11 @@ export default function DashboardClient() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [facilityTimezone, setFacilityTimezone] = useState("Africa/Kampala");
+  const [notificationOpen, setNotificationOpen] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [selectedVisit, setSelectedVisit] = useState<QueueItem | null>(null);
   const [search, setSearch] = useState("");
@@ -77,22 +168,37 @@ export default function DashboardClient() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [saving, setSaving] = useState(false);
+  const globalSearchRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [dashboardData, facilityData, patientData, appointmentData, queueData] =
+      const [
+        dashboardData,
+        facilityData,
+        patientData,
+        appointmentData,
+        queueData,
+        reminderData,
+        notificationData,
+      ] =
         await Promise.all([
           api.get<DashboardData>("/dashboard"),
-          api.get<{ departments: Department[] }>("/facility"),
+          api.get<{ departments: Department[]; timezone: string }>("/facility"),
           api.get<Patient[]>("/patients?limit=100"),
           api.get<Appointment[]>("/appointments"),
           api.get<QueueItem[]>("/queues?status=all"),
+          api.get<Reminder[]>("/reminders?status=all"),
+          api.get<{ items: AppNotification[]; unread_count: number }>("/notifications?limit=100"),
         ]);
       setDashboard(dashboardData);
       setDepartments(facilityData.departments);
       setPatients(patientData);
       setAppointments(appointmentData);
       setQueue(queueData);
+      setReminders(reminderData);
+      setNotifications(notificationData.items);
+      setUnreadCount(notificationData.unread_count);
+      setFacilityTimezone(facilityData.timezone);
       setConnected(true);
       setError("");
     } catch (reason) {
@@ -108,6 +214,35 @@ export default function DashboardClient() {
     const timer = window.setInterval(() => void refresh(), 15000);
     return () => window.clearInterval(timer);
   }, [refresh]);
+
+  useEffect(() => {
+    let lastGPressedAt = 0;
+    function handleShortcut(event: KeyboardEvent) {
+      const target = event.target;
+      const isTyping =
+        target instanceof HTMLElement &&
+        (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+      if (isTyping || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.key === "/") {
+        event.preventDefault();
+        globalSearchRef.current?.focus();
+      } else if (event.key.toLowerCase() === "g") {
+        lastGPressedAt = Date.now();
+      } else if (
+        event.key.toLowerCase() === "p" &&
+        Date.now() - lastGPressedAt < 1000
+      ) {
+        setSection("patients");
+        lastGPressedAt = 0;
+      } else if (event.key.toLowerCase() === "n") {
+        if (section === "patients") setModal("patient");
+        else if (section === "appointments") setModal("appointment");
+        else setModal("reminder");
+      }
+    }
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [section]);
 
   useEffect(() => {
     const timer = window.setTimeout(async () => {
@@ -274,25 +409,126 @@ export default function DashboardClient() {
     }
   }
 
+  async function createReminder(form: FormData) {
+    const dueAt = new Date(String(form.get("due_at")));
+    const repeatUntilValue = String(form.get("repeat_until") ?? "");
+    const earlierAlerts = form
+      .getAll("alert_offsets")
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value > 0);
+    const reminder = await api.post<Reminder>("/reminders", {
+      title: form.get("title"),
+      note: form.get("note") || null,
+      link_type: form.get("link_type") || null,
+      link_id: form.get("link_id") || null,
+      due_at: dueAt.toISOString(),
+      timezone: facilityTimezone,
+      repeat_frequency: form.get("repeat_frequency"),
+      repeat_interval: Number(form.get("repeat_interval") || 1),
+      repeat_until: repeatUntilValue
+        ? new Date(`${repeatUntilValue}T23:59:59`).toISOString()
+        : null,
+      alert_offsets: [0, ...earlierAlerts],
+      priority: form.get("priority"),
+    });
+    setSuccess(`Reminder "${reminder.title}" created.`);
+  }
+
+  async function updateReminder(reminder: Reminder, action: "done" | "cancel" | "snooze") {
+    try {
+      await api.patch(`/reminders/${reminder.id}`, {
+        action,
+        ...(action === "snooze"
+          ? { snooze_until: new Date(Date.now() + 10 * 60 * 1000).toISOString() }
+          : {}),
+      });
+      setSuccess(
+        action === "done"
+          ? "Reminder completed."
+          : action === "cancel"
+            ? "Reminder cancelled."
+            : "Reminder snoozed for 10 minutes.",
+      );
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not update the reminder.");
+    }
+  }
+
+  async function openNotification(notification: AppNotification) {
+    try {
+      await api.post("/notifications/read", { notification_ids: [notification.id] });
+      setNotificationOpen(false);
+      if (notification.link_type === "patient" && notification.link_id) {
+        const patient = patients.find((item) => item.id === notification.link_id);
+        if (patient) {
+          setSearch(patient.patient_number);
+          setSection("patients");
+        }
+      } else if (notification.link_type === "visit" && notification.link_id) {
+        setSection("queue");
+      } else if (notification.type === "personal_reminder") {
+        setSection("reminders");
+      }
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not open the notification.");
+    }
+  }
+
+  async function markAllNotificationsRead() {
+    try {
+      await api.post("/notifications/read", {});
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not update notifications.");
+    }
+  }
+
   const todayLabel = new Intl.DateTimeFormat("en", {
     weekday: "long",
     month: "long",
     day: "numeric",
   }).format(new Date());
+  const firstName = session?.user.name?.trim().split(/\s+/)[0] ?? "there";
+  const greeting =
+    new Date().getHours() < 12
+      ? "Good morning"
+      : new Date().getHours() < 18
+        ? "Good afternoon"
+        : "Good evening";
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">I</div>
-          <div>
-            <div className="brand-name">IMARA<span>CARE</span></div>
-            <div className="brand-caption">CARE, CONNECTED</div>
-          </div>
+          <Image
+            className="brand-logo"
+            src="/images/Imara-Care%20Hospital%20Logo%20Banner.png"
+            alt="Imara-Care Hospital Management"
+            width={1800}
+            height={1080}
+            priority
+          />
+          <Image
+            className="brand-icon"
+            src="/images/Imara-Care%20Favicon.png"
+            alt="Imara-Care"
+            width={96}
+            height={96}
+            priority
+          />
         </div>
 
         <div className="facility-switch">
-          <div className="facility-icon">IC</div>
+          <div className="facility-icon">
+            <Image
+              src="/images/Imara-Care%20Favicon.png"
+              alt=""
+              width={28}
+              height={28}
+            />
+          </div>
           <div className="facility-copy">
             <span>FACILITY</span>
             <strong>{dashboard?.facility_name ?? "Imara Care Clinic"}</strong>
@@ -306,9 +542,10 @@ export default function DashboardClient() {
             <button
               className={`nav-item ${section === item.id ? "active" : ""}`}
               key={item.id}
+              aria-current={section === item.id ? "page" : undefined}
               onClick={() => setSection(item.id)}
             >
-              <span className="nav-icon">{item.short}</span>
+              <span className="nav-icon"><AppIcon name={item.icon} size={19} /></span>
               <span>{item.label}</span>
               {item.id === "queue" && dashboard?.stats.waiting_now ? (
                 <span className="nav-count">{dashboard.stats.waiting_now}</span>
@@ -317,17 +554,45 @@ export default function DashboardClient() {
           ))}
         </nav>
 
+        <section className="planned-modules" aria-labelledby="planned-modules-title">
+          <div className="nav-label" id="planned-modules-title">COMING SOON</div>
+          <div className="planned-module-list">
+            {plannedModules.map((module) => (
+              <div
+                className="nav-item nav-item-disabled"
+                key={module.label}
+                aria-disabled="true"
+                title={`${module.label} module coming soon`}
+              >
+                <span className="nav-icon"><AppIcon name={module.icon} size={19} /></span>
+                <span>{module.label}</span>
+                <span className="coming-soon-badge">Soon</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
         <div className="sidebar-spacer" />
+        <button
+          className={`nav-item staff-invite-link ${section === "reminders" ? "active" : ""}`}
+          onClick={() => setSection("reminders")}
+        >
+          <span className="nav-icon"><AppIcon name="clock" size={19} /></span>
+          <span>My reminders</span>
+          {reminders.filter((reminder) => reminder.status === "scheduled").length > 0 && (
+            <span className="nav-count">{reminders.filter((reminder) => reminder.status === "scheduled").length}</span>
+          )}
+        </button>
         <a className="nav-item staff-invite-link" href="/security/two-factor">
-          <span className="nav-icon">2F</span>
+          <span className="nav-icon"><AppIcon name="security" size={19} /></span>
           <span>My security</span>
         </a>
         <a className="nav-item staff-invite-link" href="/staff-invitations">
-          <span className="nav-icon">+</span>
+          <span className="nav-icon"><AppIcon name="staff" size={19} /></span>
           <span>Invite staff</span>
         </a>
         <div className="sidebar-help">
-          <div className="help-mark">?</div>
+          <div className="help-mark" aria-hidden="true">?</div>
           <div>
             <strong>Need a hand?</strong>
             <span>Help &amp; support</span>
@@ -345,7 +610,11 @@ export default function DashboardClient() {
           </div>
           <div className="user-copy">
             <strong>{session?.user.name ?? "Staff member"}</strong>
-            <span>{session?.user.role === "admin" ? "Administrator" : "Staff"}</span>
+            <span>
+              {(session?.user.staffRole ?? session?.user.role ?? "staff")
+                .replaceAll("_", " ")
+                .replace(/\b\w/g, (letter) => letter.toUpperCase())}
+            </span>
           </div>
           <button
             className="icon-button"
@@ -353,7 +622,7 @@ export default function DashboardClient() {
             title="Sign out"
             onClick={() => void authClient.signOut().then(() => window.location.assign("/login"))}
           >
-            ⇥
+            <AppIcon name="logout" size={18} />
           </button>
         </div>
       </aside>
@@ -362,17 +631,53 @@ export default function DashboardClient() {
         <header className="topbar">
           <div className="breadcrumb">
             <span>Workspace</span><span className="crumb-slash">/</span>
-            <strong>{navigation.find((item) => item.id === section)?.label}</strong>
+            <strong>{sectionLabels[section]}</strong>
           </div>
           <div className="topbar-actions">
-            <div className={`connection ${connected ? "online" : "offline"}`}>
-              <span className="connection-dot" /> {connected ? "Connected" : "Offline"}
-            </div>
-            <button className="icon-button notification-button" aria-label="Notifications">
-              <span className="bell-shape">◔</span>
-              <i />
-            </button>
-            <div className="topbar-avatar">
+              <label className="global-search">
+                <AppIcon name="search" size={17} />
+                <input
+                  ref={globalSearchRef}
+                  aria-label="Search patients"
+                  placeholder="Search patients…"
+                  value={search}
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    setSection("patients");
+                  }}
+                />
+                <kbd>/</kbd>
+              </label>
+              <div className={`connection ${connected ? "online" : "offline"}`}>
+                <span className="connection-dot" /> {connected ? "Connected" : "Offline"}
+              </div>
+              <button className="button button-quiet topbar-reminder-button" onClick={() => setModal("reminder")}>
+                <AppIcon name="add" size={17} /> <span>Reminder</span>
+              </button>
+              <div className="notification-menu-wrap">
+                <button
+                  className="icon-button notification-button"
+                  aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`}
+                  aria-expanded={notificationOpen}
+                  onClick={() => setNotificationOpen((open) => !open)}
+                >
+                  <AppIcon name="notifications" size={20} />
+                  {unreadCount > 0 && <span className="notification-count">{unreadCount > 99 ? "99+" : unreadCount}</span>}
+                </button>
+                {notificationOpen && (
+                  <NotificationPopover
+                    items={notifications}
+                    unreadCount={unreadCount}
+                    onOpen={openNotification}
+                    onMarkAllRead={markAllNotificationsRead}
+                    onSeeAll={() => {
+                      setSection("notifications");
+                      setNotificationOpen(false);
+                    }}
+                  />
+                )}
+              </div>
+              <div className="topbar-avatar">
               {(session?.user.name ?? "Staff")
                 .split(/\s+/)
                 .map((part) => part[0])
@@ -400,6 +705,7 @@ export default function DashboardClient() {
           {section === "overview" && (
             <Overview
               todayLabel={todayLabel}
+              greeting={`${greeting}, ${firstName}`}
               dashboard={dashboard}
               appointments={appointments}
               queue={queue}
@@ -447,6 +753,22 @@ export default function DashboardClient() {
                 setSelectedVisit(item);
                 setModal("triage");
               }}
+            />
+          )}
+          {section === "reminders" && (
+            <RemindersView
+              reminders={reminders}
+              timezone={facilityTimezone}
+              onNew={() => setModal("reminder")}
+              onAction={updateReminder}
+            />
+          )}
+          {section === "notifications" && (
+            <NotificationsView
+              items={notifications}
+              unreadCount={unreadCount}
+              onOpen={openNotification}
+              onMarkAllRead={markAllNotificationsRead}
             />
           )}
         </div>
@@ -540,6 +862,36 @@ export default function DashboardClient() {
               </form>
             </ModalFrame>
           )}
+
+          {modal === "reminder" && (
+            <ModalFrame
+              title="Create a reminder"
+              subtitle="Choose when to be reminded. Times use your facility timezone."
+              onClose={() => setModal(null)}
+            >
+              <form className="form-grid" onSubmit={(event) => void submit(event, createReminder)}>
+                <label className="span-two">Title<input name="title" required maxLength={160} autoFocus placeholder="e.g. Review tomorrow’s schedule" /></label>
+                <label className="span-two">Note <span className="optional">(optional)</span><textarea name="note" maxLength={500} placeholder="Avoid clinical details. Use a link instead." rows={2} /></label>
+                <label>Due date &amp; time<input name="due_at" type="datetime-local" required defaultValue={localDateTimeValue(new Date(Date.now() + 60 * 60 * 1000))} /></label>
+                <label>Priority<select name="priority" defaultValue="normal"><option value="normal">Normal</option><option value="high">High</option></select></label>
+                <label>Repeat<select name="repeat_frequency" defaultValue="none"><option value="none">Does not repeat</option><option value="daily">Daily</option><option value="weekdays">Weekdays</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="custom">Every N days</option></select></label>
+                <label>Repeat interval<input name="repeat_interval" type="number" min="1" max="365" defaultValue="1" /></label>
+                <label className="span-two">Repeat until <span className="optional">(optional)</span><input name="repeat_until" type="date" /></label>
+                <div className="form-divider span-two">ALERT ME</div>
+                <label className="check-label span-two"><input name="alert_offsets" type="checkbox" value="10" /> 10 minutes before</label>
+                <label className="check-label span-two"><input name="alert_offsets" type="checkbox" value="60" /> 1 hour before</label>
+                <label className="check-label span-two"><input name="alert_offsets" type="checkbox" value="1440" /> 1 day before</label>
+                <div className="form-divider span-two">LINK (OPTIONAL)</div>
+                <label>Link type<select name="link_type" defaultValue=""><option value="">No link</option><option value="patient">Patient</option><option value="visit">Visit</option><option value="order">Order</option><option value="invoice">Invoice</option><option value="page">Page</option></select></label>
+                <label>Link ID<input name="link_id" maxLength={128} placeholder="Record ID" /></label>
+                <div className="modal-footer span-two">
+                  <button type="button" className="button button-quiet" onClick={() => setModal(null)}>Cancel</button>
+                  <button className="button button-primary" disabled={saving}>{saving ? "Saving…" : "Create reminder"}</button>
+                </div>
+                <p className="form-note span-two">High-priority reminders are highlighted. Reminders are private to your account.</p>
+              </form>
+            </ModalFrame>
+          )}
         </div>
       )}
     </div>
@@ -548,6 +900,7 @@ export default function DashboardClient() {
 
 function Overview({
   todayLabel,
+  greeting,
   dashboard,
   appointments,
   queue,
@@ -559,6 +912,7 @@ function Overview({
   onTriage,
 }: {
   todayLabel: string;
+  greeting: string;
   dashboard: DashboardData | null;
   appointments: Appointment[];
   queue: QueueItem[];
@@ -579,28 +933,28 @@ function Overview({
 
   return (
     <>
-      <div className="page-heading">
-        <div>
+      <div className="page-heading overview-heading">
+        <div className="overview-welcome">
           <div className="eyebrow">{todayLabel}</div>
-          <h1>Good morning, Facility Manager</h1>
-          <p>Here&apos;s what&apos;s happening at your facility today.</p>
+          <h1>{greeting}</h1>
+          <p>Here&apos;s your facility snapshot for today. Let&apos;s make it a great one.</p>
         </div>
         <div className="heading-actions">
-          <button className="button button-quiet" onClick={onRegister}><span className="button-plus">+</span> Register patient</button>
-          <button className="button button-primary" onClick={onBook}><span className="button-plus">+</span> Book appointment</button>
+          <button className="button button-quiet" onClick={onRegister}><AppIcon name="patients" size={18} /> Register patient</button>
+          <button className="button button-primary" onClick={onBook}><AppIcon name="add" size={18} /> Book appointment</button>
         </div>
       </div>
 
       <div className="stat-grid">
-        <StatCard label="Patients today" value={stats?.patients_today ?? 0} note="New registrations" symbol="P" color="green" />
-        <StatCard label="Visits today" value={stats?.visits_today ?? 0} note="Checked in today" symbol="V" color="blue" />
-        <StatCard label="Waiting now" value={stats?.waiting_now ?? 0} note="Across all departments" symbol="Q" color="orange" />
-        <StatCard label="Appointments" value={stats?.appointments_today ?? 0} note="Scheduled for today" symbol="A" color="purple" />
+        <StatCard label="Patients today" value={stats?.patients_today ?? 0} note="New registrations" icon="patients" color="green" />
+        <StatCard label="Visits today" value={stats?.visits_today ?? 0} note="Checked in today" icon="queue" color="blue" />
+        <StatCard label="Waiting now" value={stats?.waiting_now ?? 0} note="Across all departments" icon="clock" color="orange" />
+        <StatCard label="Appointments" value={stats?.appointments_today ?? 0} note="Scheduled for today" icon="appointments" color="purple" />
       </div>
 
-      <div className="section-title-row">
-        <div><h2>Today at a glance</h2><p>Live activity across your facility</p></div>
-        <span className="live-tag"><i /> LIVE</span>
+      <div className="section-title-row overview-section-heading">
+        <div><h2>Facility overview</h2><p>A live look at patient flow and today&apos;s schedule</p></div>
+        <span className="live-tag"><i /> UPDATES EVERY 15 SEC</span>
       </div>
 
       <div className="dashboard-grid">
@@ -612,7 +966,7 @@ function Overview({
           <div className="department-list">
             {(dashboard?.departments ?? []).slice(0, 6).map((department, index) => (
               <div className="department-row" key={department.id}>
-                <div className={`department-badge badge-${index % 5}`}>{department.code.slice(0, 2)}</div>
+                <div className={`department-badge badge-${index % 5}`}><AppIcon name="queue" size={18} /></div>
                 <div className="department-name"><strong>{department.name}</strong><span>{department.code} department</span></div>
                 <div className="department-wait"><strong>{department.waiting ?? 0}</strong><span>waiting</span></div>
                 <div className="mini-bar"><i style={{ width: `${Math.min(100, (department.waiting ?? 0) * 13)}%` }} /></div>
@@ -660,22 +1014,233 @@ function Overview({
 
         <section className="panel quick-panel">
           <div className="panel-heading"><div><h3>Quick actions</h3><span className="panel-subtitle">Common front desk tasks</span></div></div>
-          <button className="quick-action" onClick={onRegister}><span className="quick-icon quick-green">+</span><span><strong>Register a patient</strong><small>Create a new patient record</small></span><b>→</b></button>
-          <button className="quick-action" onClick={() => onNavigate("patients")}><span className="quick-icon quick-blue">⌕</span><span><strong>Find a patient</strong><small>Search the patient directory</small></span><b>→</b></button>
-          <button className="quick-action" onClick={onBook}><span className="quick-icon quick-purple">◷</span><span><strong>Book an appointment</strong><small>Reserve a visit time</small></span><b>→</b></button>
+          <button className="quick-action" onClick={onRegister}><span className="quick-icon quick-green"><AppIcon name="patients" /></span><span><strong>Register a patient</strong><small>Create a new patient record</small></span><b aria-hidden="true">→</b></button>
+          <button className="quick-action" onClick={() => onNavigate("patients")}><span className="quick-icon quick-blue"><AppIcon name="search" /></span><span><strong>Find a patient</strong><small>Search the patient directory</small></span><b aria-hidden="true">→</b></button>
+          <button className="quick-action" onClick={onBook}><span className="quick-icon quick-purple"><AppIcon name="appointments" /></span><span><strong>Book an appointment</strong><small>Reserve a visit time</small></span><b aria-hidden="true">→</b></button>
         </section>
       </div>
     </>
   );
 }
 
-function StatCard({ label, value, note, symbol, color }: { label: string; value: number; note: string; symbol: string; color: string }) {
+function StatCard({ label, value, note, icon, color }: { label: string; value: number; note: string; icon: IconName; color: string }) {
   return (
     <div className="stat-card">
-      <div className={`stat-icon icon-${color}`}>{symbol}</div>
+      <div className={`stat-icon icon-${color}`}><AppIcon name={icon} size={21} /></div>
       <div className="stat-copy"><span>{label}</span><strong>{value}</strong><small>{note}</small></div>
-      <span className="stat-trend">↗</span>
     </div>
+  );
+}
+
+function NotificationPopover({
+  items,
+  unreadCount,
+  onOpen,
+  onMarkAllRead,
+  onSeeAll,
+}: {
+  items: AppNotification[];
+  unreadCount: number;
+  onOpen: (notification: AppNotification) => void;
+  onMarkAllRead: () => void;
+  onSeeAll: () => void;
+}) {
+  const recent = items.slice(0, 10);
+  const todayKey = new Date().toLocaleDateString();
+  const todayItems = recent.filter((item) => new Date(item.created_at).toLocaleDateString() === todayKey);
+  const earlierItems = recent.filter((item) => new Date(item.created_at).toLocaleDateString() !== todayKey);
+
+  return (
+    <section className="notification-popover" aria-label="Recent notifications">
+      <header className="notification-popover-heading">
+        <div><strong>Notifications</strong><span>{unreadCount} unread</span></div>
+        {unreadCount > 0 && <button className="text-button" onClick={onMarkAllRead}>Mark all as read</button>}
+      </header>
+      {items.length ? (
+        <div className="notification-items">
+          {todayItems.length > 0 && <div className="notification-group-label">Today</div>}
+          {todayItems.map((item) => (
+            <button
+              className={`notification-item ${item.status === "unread" ? "unread" : ""} priority-${item.priority}`}
+              key={item.id}
+              onClick={() => onOpen(item)}
+            >
+              <span className="notification-item-icon"><AppIcon name={item.type === "personal_reminder" ? "clock" : "notifications"} size={18} /></span>
+              <span className="notification-item-copy">
+                <strong>{item.title}</strong>
+                <small>{item.body}</small>
+                <time dateTime={item.created_at}>{formatRelativeTime(item.created_at)}</time>
+              </span>
+              {item.status === "unread" && <i className="unread-dot" />}
+            </button>
+          ))}
+          {earlierItems.length > 0 && <div className="notification-group-label">Earlier</div>}
+          {earlierItems.map((item) => (
+            <button
+              className={`notification-item ${item.status === "unread" ? "unread" : ""} priority-${item.priority}`}
+              key={item.id}
+              onClick={() => onOpen(item)}
+            >
+              <span className="notification-item-icon"><AppIcon name={item.type === "personal_reminder" ? "clock" : "notifications"} size={18} /></span>
+              <span className="notification-item-copy">
+                <strong>{item.title}</strong>
+                <small>{item.body}</small>
+                <time dateTime={item.created_at}>{formatRelativeTime(item.created_at)}</time>
+              </span>
+              {item.status === "unread" && <i className="unread-dot" />}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <EmptyState title="You’re all caught up" detail="New notifications will appear here." />
+      )}
+      <button className="notification-see-all" onClick={onSeeAll}>See all notifications <span>→</span></button>
+    </section>
+  );
+}
+
+function NotificationsView({
+  items,
+  unreadCount,
+  onOpen,
+  onMarkAllRead,
+}: {
+  items: AppNotification[];
+  unreadCount: number;
+  onOpen: (notification: AppNotification) => void;
+  onMarkAllRead: () => void;
+}) {
+  const [filter, setFilter] = useState<"all" | "unread" | "tasks" | "alerts" | "system">("all");
+  const filtered = items.filter((item) => {
+    if (filter === "unread") return item.status === "unread";
+    if (filter === "tasks") return item.type === "personal_reminder";
+    if (filter === "alerts") return ["high", "critical"].includes(item.priority);
+    if (filter === "system") return item.type !== "personal_reminder";
+    return true;
+  });
+
+  return (
+    <>
+      <div className="page-heading">
+        <div><div className="eyebrow">YOUR UPDATES</div><h1>Notifications</h1><p>Personal reminders and important updates for your workspace.</p></div>
+        {unreadCount > 0 && <button className="button button-quiet" onClick={onMarkAllRead}>Mark all as read</button>}
+      </div>
+      <section className="panel notification-page-list">
+        <div className="panel-heading"><div><h3>Recent notifications</h3><span className="panel-subtitle">{unreadCount} unread</span></div></div>
+        <div className="notification-filter-tabs" role="tablist" aria-label="Notification type">
+          {(["all", "unread", "tasks", "alerts", "system"] as const).map((item) => (
+            <button
+              key={item}
+              role="tab"
+              aria-selected={filter === item}
+              className={filter === item ? "active" : ""}
+              onClick={() => setFilter(item)}
+            >
+              {item[0].toUpperCase() + item.slice(1)}
+            </button>
+          ))}
+        </div>
+        {filtered.length ? filtered.map((item) => (
+          <button
+            className={`notification-item ${item.status === "unread" ? "unread" : ""} priority-${item.priority}`}
+            key={item.id}
+            onClick={() => onOpen(item)}
+          >
+            <span className="notification-item-icon"><AppIcon name={item.type === "personal_reminder" ? "clock" : "notifications"} size={18} /></span>
+            <span className="notification-item-copy">
+              <strong>{item.title}</strong>
+              <small>{item.body}</small>
+              <time dateTime={item.created_at}>{formatRelativeTime(item.created_at)}</time>
+            </span>
+            {item.status === "unread" && <i className="unread-dot" />}
+          </button>
+        )) : <EmptyState title={filter === "all" ? "No notifications yet" : `No ${filter} notifications`} detail="When something needs your attention, it will show up here." />}
+      </section>
+    </>
+  );
+}
+
+function RemindersView({
+  reminders,
+  timezone,
+  onNew,
+  onAction,
+}: {
+  reminders: Reminder[];
+  timezone: string;
+  onNew: () => void;
+  onAction: (reminder: Reminder, action: "done" | "cancel" | "snooze") => void;
+}) {
+  const [filter, setFilter] = useState<"upcoming" | "today" | "overdue" | "completed">("upcoming");
+  const now = Date.now();
+  const todayKey = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  function reminderDay(reminder: Reminder) {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: reminder.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(reminder.due_at));
+  }
+  const filtered = reminders.filter((reminder) => {
+    if (filter === "completed") return reminder.status !== "scheduled";
+    if (reminder.status !== "scheduled") return false;
+    const due = new Date(reminder.due_at).getTime();
+    if (filter === "overdue") return due < now;
+    if (filter === "today") return reminderDay(reminder) === todayKey && due >= now;
+    return due >= now && reminderDay(reminder) !== todayKey;
+  });
+
+  return (
+    <>
+      <div className="page-heading">
+        <div><div className="eyebrow">PERSONAL TASKS</div><h1>My reminders</h1><p>Keep track of follow-ups and tasks you don’t want to miss.</p></div>
+        <button className="button button-primary" onClick={onNew}><AppIcon name="add" size={18} /> Add reminder</button>
+      </div>
+      <section className="panel reminder-page-list">
+        <div className="reminder-tabs" role="tablist" aria-label="Reminder status">
+          {(["upcoming", "today", "overdue", "completed"] as const).map((item) => (
+            <button
+              key={item}
+              className={filter === item ? "active" : ""}
+              role="tab"
+              aria-selected={filter === item}
+              onClick={() => setFilter(item)}
+            >
+              {item[0].toUpperCase() + item.slice(1)}
+            </button>
+          ))}
+        </div>
+        {filtered.length ? filtered.map((reminder) => (
+          <div className="reminder-row" key={reminder.id}>
+            <span className={`reminder-priority-dot ${reminder.priority}`} />
+            <div className="reminder-copy">
+              <strong>{reminder.title}</strong>
+              <span>{new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: reminder.timezone }).format(new Date(reminder.due_at))} · {reminder.timezone}</span>
+              {reminder.note && <small>{reminder.note}</small>}
+            </div>
+            {reminder.status === "scheduled" ? (
+              <div className="reminder-actions">
+                <button className="small-outline" onClick={() => onAction(reminder, "snooze")}>Snooze 10 min</button>
+                <button className="small-primary" onClick={() => onAction(reminder, "done")}>Done</button>
+                <button className="icon-button" aria-label={`Cancel ${reminder.title}`} onClick={() => onAction(reminder, "cancel")}>×</button>
+              </div>
+            ) : <span className="reminder-completed-label">{reminder.status}</span>}
+          </div>
+        )) : (
+          <EmptyState
+            title={filter === "completed" ? "No completed reminders" : filter === "overdue" ? "No overdue reminders" : filter === "today" ? "No reminders due today" : "Nothing on your list"}
+            detail={filter === "upcoming" ? "Create a reminder to keep an important task on track." : "Reminders in this category will appear here."}
+          />
+        )}
+      </section>
+      <p className="reminder-privacy-note">Reminders are private to your account. Avoid including clinical details in reminder titles or notes.</p>
+    </>
   );
 }
 

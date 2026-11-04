@@ -14,13 +14,16 @@ export default function LoginForm() {
     setError("");
     setBusy(true);
     const form = new FormData(event.currentTarget);
+    const email = String(form.get("email") ?? "");
+    sessionStorage.setItem("imara-pending-auth-email", email.trim().toLowerCase());
     try {
       const result = await authClient.signIn.email({
-        email: String(form.get("email") ?? ""),
+        email,
         password: String(form.get("password") ?? ""),
         callbackURL: "/",
       });
       if (result.error) {
+        sessionStorage.removeItem("imara-pending-auth-email");
         setError("That email or password did not work. Try again or contact your administrator.");
         return;
       }
@@ -33,9 +36,11 @@ export default function LoginForm() {
       ) {
         return;
       }
+      sessionStorage.removeItem("imara-pending-auth-email");
       router.replace("/");
       router.refresh();
     } catch {
+      sessionStorage.removeItem("imara-pending-auth-email");
       setError("Sign in is temporarily unavailable. Try again shortly.");
     } finally {
       setBusy(false);
@@ -64,6 +69,9 @@ export default function LoginForm() {
             {busy ? "Signing in..." : "Sign in"}
           </button>
         </form>
+        <a className="back-link forgot-password-link" href="/forgot-password">
+          Forgot password?
+        </a>
         <p className="auth-footnote">Staff accounts are created by invitation only.</p>
       </section>
     </main>

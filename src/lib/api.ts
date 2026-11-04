@@ -81,6 +81,42 @@ export interface DashboardData {
   departments: Department[];
 }
 
+export interface Reminder {
+  id: string;
+  title: string;
+  note: string | null;
+  link_type: "patient" | "visit" | "order" | "invoice" | "page" | null;
+  link_id: string | null;
+  due_at: string;
+  timezone: string;
+  repeat_frequency: "none" | "daily" | "weekdays" | "weekly" | "monthly" | "custom";
+  repeat_interval: number;
+  repeat_until: string | null;
+  alert_offsets: number[];
+  priority: "normal" | "high";
+  status: "scheduled" | "completed" | "cancelled";
+  created_at: string;
+}
+
+export interface AppNotification {
+  id: string;
+  reminder_id: string | null;
+  type: string;
+  title: string;
+  body: string;
+  link_type: Reminder["link_type"];
+  link_id: string | null;
+  priority: "normal" | "high" | "critical";
+  status: "unread" | "read" | "archived";
+  created_at: string;
+  read_at: string | null;
+}
+
+export interface NotificationList {
+  items: AppNotification[];
+  unread_count: number;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const { data: authData, error: authError } = await authClient.token();
   if (authError || !authData?.token) {

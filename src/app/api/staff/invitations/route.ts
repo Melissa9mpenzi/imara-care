@@ -4,11 +4,11 @@ import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import {
   auth,
-  authDatabase,
   invitationTokenHash,
   recordAuthAudit,
   requiresMfa,
 } from "@/lib/auth";
+import { queryAuthDatabase } from "@/lib/auth-database";
 
 export const runtime = "nodejs";
 
@@ -108,21 +108,18 @@ export async function POST(request: Request) {
     process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
   ).toString();
 
-  authDatabase
-    .prepare(
-      `UPDATE staff_invitations
+  await queryAuthDatabase(
+    `UPDATE staff_invitations
        SET revoked_at = ?
        WHERE email = ? AND facility_id = ? AND used_at IS NULL AND revoked_at IS NULL`,
-    )
-    .run(createdAt, email, facilityId);
-  authDatabase
-    .prepare(
-      `INSERT INTO staff_invitations
+    [createdAt, email, facilityId],
+  );
+  await queryAuthDatabase(
+    `INSERT INTO staff_invitations
         (id, token_hash, email, full_name, staff_role, facility_id, created_by,
          created_at, expires_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
+    [
       id,
       invitationTokenHash(rawToken),
       email,
@@ -132,7 +129,8 @@ export async function POST(request: Request) {
       session.user.id,
       createdAt,
       expiresAt,
-    );
+    ],
+  );
 
   if (mailer) {
     try {
@@ -143,9 +141,10 @@ export async function POST(request: Request) {
         text: `${fullName},\n\nYou have been invited to join ${facilityName} as ${staffRole.replaceAll("_", " ")}.\n\nAccept the invitation within 48 hours:\n${invitationUrl}\n`,
       });
     } catch (error) {
-      authDatabase
-        .prepare("UPDATE staff_invitations SET revoked_at = ? WHERE id = ?")
-        .run(new Date().toISOString(), id);
+      await queryAuthDatabase(
+        "UPDATE staff_invitations SET revoked_at = ? WHERE id = ?",
+        [new Date().toISOString(), id],
+      );
       console.error("Could not send staff invitation email.", error);
       return NextResponse.json(
         { detail: "The invitation email could not be sent. Check the email settings and try again." },
@@ -154,7 +153,7 @@ export async function POST(request: Request) {
     }
   }
 
-  recordAuthAudit("invite.sent", {
+  await recordAuthAudit("invite.sent", {
     actorUserId: session.user.id,
     facilityId,
     email,
@@ -198,17 +197,16 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ detail: "Provide the invitation ID." }, { status: 422 });
   }
 
-  const result = authDatabase
-    .prepare(
-      `UPDATE staff_invitations SET revoked_at = ?
+  const result = await queryAuthDatabase(
+    `UPDATE staff_invitations SET revoked_at = ?
        WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL`,
-    )
-    .run(new Date().toISOString(), id);
-  if (result.changes === 0) {
+    [new Date().toISOString(), id],
+  );
+  if (result.rowCount === 0) {
     return NextResponse.json({ detail: "Invitation not found or already used." }, { status: 404 });
   }
 
-  recordAuthAudit("invite.revoked", {
+  await recordAuthAudit("invite.revoked", {
     actorUserId: session.user.id,
     facilityId: process.env.IMARA_FACILITY_ID ?? "IM",
   });

@@ -1,88 +1,42 @@
 import { createHash, randomUUID } from "node:crypto";
-import { join } from "node:path";
 import { hash, verify } from "@node-rs/argon2";
-import Database from "better-sqlite3";
 import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
-import { admin, jwt, twoFactor } from "better-auth/plugins";
-import { loadEnvConfig } from "@next/env";
-
-loadEnvConfig(process.cwd());
-const authDatabase = new Database(
-  join(process.cwd(), "imara-care-auth.db"),
-);
-authDatabase.pragma("journal_mode = WAL");
-authDatabase.exec(`
-  CREATE TABLE IF NOT EXISTS staff_invitations (
-    id TEXT PRIMARY KEY,
-    token_hash TEXT NOT NULL UNIQUE,
-    email TEXT NOT NULL,
-    full_name TEXT NOT NULL,
-    staff_role TEXT NOT NULL,
-    facility_id TEXT NOT NULL,
-    created_by TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    used_at TEXT,
-    revoked_at TEXT
-  );
-  CREATE INDEX IF NOT EXISTS ix_staff_invitations_email
-    ON staff_invitations (facility_id, email, expires_at);
-  CREATE TABLE IF NOT EXISTS auth_audit_events (
-    id TEXT PRIMARY KEY,
-    actor_user_id TEXT,
-    facility_id TEXT,
-    action TEXT NOT NULL,
-    email_hash TEXT,
-    created_at TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS auth_login_limits (
-    email_hash TEXT PRIMARY KEY,
-    failure_count INTEGER NOT NULL,
-    window_started_at TEXT NOT NULL,
-    locked_until TEXT
-  );
-  CREATE TABLE IF NOT EXISTS auth_mfa_setup_pending (
-    user_id TEXT PRIMARY KEY,
-    started_at TEXT NOT NULL
-  );
-`);
+import nodemailer from "nodemailer";
+import { admin, emailOTP, jwt, twoFactor } from "better-auth/plugins";
+import { authDatabase, queryAuthDatabase } from "@/lib/auth-database";
 
 export const invitationTokenHash = (token: string) =>
   createHash("sha256").update(token).digest("hex");
 
-export function findActiveInvitation(token: string) {
-  return authDatabase
-    .prepare(
-      `SELECT id, email, full_name AS fullName, staff_role AS staffRole,
-              facility_id AS facilityId, expires_at AS expiresAt
+export async function findActiveInvitation(token: string) {
+  const result = await queryAuthDatabase<{
+    id: string;
+    email: string;
+    fullName: string;
+    staffRole: string;
+    facilityId: string;
+    expiresAt: string;
+  }>(
+    `SELECT id, email, full_name AS "fullName", staff_role AS "staffRole",
+              facility_id AS "facilityId", expires_at AS "expiresAt"
        FROM staff_invitations
        WHERE token_hash = ? AND used_at IS NULL AND revoked_at IS NULL
          AND expires_at > ?`,
-    )
-    .get(invitationTokenHash(token), new Date().toISOString()) as
-    | {
-        id: string;
-        email: string;
-        fullName: string;
-        staffRole: string;
-        facilityId: string;
-        expiresAt: string;
-      }
-    | undefined;
+    [invitationTokenHash(token), new Date().toISOString()],
+  );
+  return result.rows[0];
 }
 
-export function recordAuthAudit(
+export async function recordAuthAudit(
   action: string,
   options: { actorUserId?: string; facilityId?: string; email?: string } = {},
 ) {
-  authDatabase
-    .prepare(
-      `INSERT INTO auth_audit_events
+  await queryAuthDatabase(
+    `INSERT INTO auth_audit_events
         (id, actor_user_id, facility_id, action, email_hash, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
+    [
       randomUUID(),
       options.actorUserId ?? null,
       options.facilityId ?? null,
@@ -91,10 +45,20 @@ export function recordAuthAudit(
         ? createHash("sha256").update(options.email.trim().toLowerCase()).digest("hex")
         : null,
       new Date().toISOString(),
-    );
+    ],
+  );
 }
 
 const facilityId = process.env.IMARA_FACILITY_ID ?? "IM";
+const authBaseURL = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
+const authBase = new URL(authBaseURL);
+const trustedOrigins = new Set([authBase.origin]);
+if (authBase.hostname === "localhost" || authBase.hostname === "127.0.0.1") {
+  const alternateLoopback = new URL(authBase);
+  alternateLoopback.hostname =
+    authBase.hostname === "localhost" ? "127.0.0.1" : "localhost";
+  trustedOrigins.add(alternateLoopback.origin);
+}
 const loginWindowMilliseconds = 15 * 60 * 1000;
 const mfaRequiredRoles = new Set([
   "admin",
@@ -116,38 +80,188 @@ function emailHash(email: string) {
     return createHash("sha256").update(email).digest("hex");
 }
 
-function recordFailedLogin(email: string) {
-    const now = Date.now();
-    const nowIso = new Date(now).toISOString();
-    const hashedEmail = emailHash(email);
-    const previous = authDatabase
-      .prepare(
-        `SELECT failure_count AS failureCount, window_started_at AS windowStartedAt
-         FROM auth_login_limits WHERE email_hash = ?`,
-      )
-      .get(hashedEmail) as
-      | { failureCount: number; windowStartedAt: string }
-      | undefined;
-    const inWindow =
-      previous !== undefined && now - Date.parse(previous.windowStartedAt) < loginWindowMilliseconds;
-    const failureCount = inWindow ? previous.failureCount + 1 : 1;
-    const windowStartedAt = inWindow ? previous.windowStartedAt : nowIso;
-    const lockedUntil =
-      failureCount >= 5
-        ? new Date(now + loginWindowMilliseconds).toISOString()
-        : null;
+function localPasswordResetMailboxEnabled() {
+  return (
+    process.env.NODE_ENV === "development" &&
+    process.env.LOCAL_AUTH_MAILBOX === "true"
+  );
+}
 
-    authDatabase
-      .prepare(
-        `INSERT INTO auth_login_limits
+function getAuthMailer() {
+  const { SMTP_HOST, SMTP_FROM, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_SECURE } = process.env;
+  if ((!SMTP_HOST || !SMTP_PASSWORD) && localPasswordResetMailboxEnabled()) {
+    return null;
+  }
+
+  const port = Number(SMTP_PORT ?? "587");
+  if (
+    !SMTP_HOST ||
+    !SMTP_FROM ||
+    !Number.isInteger(port) ||
+    port < 1 ||
+    port > 65535 ||
+    (Boolean(SMTP_USER) !== Boolean(SMTP_PASSWORD))
+  ) {
+    throw new APIError("SERVICE_UNAVAILABLE", {
+      message: "Authentication email delivery is not configured.",
+    });
+  }
+
+  return nodemailer.createTransport({
+    host: SMTP_HOST,
+    port,
+    secure: SMTP_SECURE === "true",
+    auth: SMTP_USER ? { user: SMTP_USER, pass: SMTP_PASSWORD } : undefined,
+  });
+}
+
+async function sendPasswordResetOTP(email: string, otp: string) {
+  const transport = getAuthMailer();
+  if (!transport) {
+    await queryAuthDatabase(
+      `INSERT INTO auth_local_mailbox (email_hash, code, expires_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(email_hash) DO UPDATE SET
+           code = excluded.code,
+           expires_at = excluded.expires_at`,
+      [
+        emailHash(normalizedEmail(email)),
+        otp,
+        new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      ],
+    );
+    return;
+  }
+
+  await transport.sendMail({
+    from: process.env.SMTP_FROM,
+    to: email,
+    subject: "Your IMARA-CARE password reset code",
+    text: `Your password reset code is ${otp}. It expires in 10 minutes. If you did not request a password reset, ignore this email.`,
+    html: `<p>Your IMARA-CARE password reset code is:</p><p style="font-size:24px;font-weight:700;letter-spacing:6px">${otp}</p><p>This code expires in 10 minutes. If you did not request a password reset, ignore this email.</p>`,
+  });
+}
+
+async function sendTwoFactorOTP(email: string, otp: string) {
+  const transport = getAuthMailer();
+  if (!transport) {
+    await queryAuthDatabase(
+      `INSERT INTO auth_local_two_factor_mailbox (email_hash, code, expires_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(email_hash) DO UPDATE SET
+           code = excluded.code,
+           expires_at = excluded.expires_at`,
+      [
+        emailHash(normalizedEmail(email)),
+        otp,
+        new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      ],
+    );
+    return;
+  }
+
+  await transport.sendMail({
+    from: process.env.SMTP_FROM,
+    to: email,
+    subject: "Your IMARA-CARE sign-in code",
+    text: `Your sign-in verification code is ${otp}. It expires in 10 minutes. If you did not try to sign in, change your password and contact your administrator.`,
+    html: `<p>Your IMARA-CARE sign-in verification code is:</p><p style="font-size:24px;font-weight:700;letter-spacing:6px">${otp}</p><p>This code expires in 10 minutes. If you did not try to sign in, change your password and contact your administrator.</p>`,
+  });
+}
+
+export async function getLocalPasswordResetCode(email: string) {
+  if (!localPasswordResetMailboxEnabled()) return undefined;
+
+  const hashedEmail = emailHash(normalizedEmail(email));
+  const result = await queryAuthDatabase<{
+    code: string;
+    expiresAt: string;
+  }>(
+    'SELECT code, expires_at AS "expiresAt" FROM auth_local_mailbox WHERE email_hash = ?',
+    [hashedEmail],
+  );
+  const entry = result.rows[0];
+  if (!entry) return undefined;
+
+  if (Date.parse(entry.expiresAt) <= Date.now()) {
+    await queryAuthDatabase(
+      "DELETE FROM auth_local_mailbox WHERE email_hash = ?",
+      [hashedEmail],
+    );
+    return undefined;
+  }
+
+  return entry.code;
+}
+
+export async function getLocalTwoFactorCode(email: string) {
+  if (!localPasswordResetMailboxEnabled()) return undefined;
+
+  const hashedEmail = emailHash(normalizedEmail(email));
+  const result = await queryAuthDatabase<{
+    code: string;
+    expiresAt: string;
+  }>(
+    `SELECT code, expires_at AS "expiresAt"
+       FROM auth_local_two_factor_mailbox
+       WHERE email_hash = ?`,
+    [hashedEmail],
+  );
+  const entry = result.rows[0];
+  if (!entry) return undefined;
+
+  if (Date.parse(entry.expiresAt) <= Date.now()) {
+    await queryAuthDatabase(
+      "DELETE FROM auth_local_two_factor_mailbox WHERE email_hash = ?",
+      [hashedEmail],
+    );
+    return undefined;
+  }
+
+  return entry.code;
+}
+
+async function consumeLocalTwoFactorCode(email: string) {
+  await queryAuthDatabase(
+    "DELETE FROM auth_local_two_factor_mailbox WHERE email_hash = ?",
+    [emailHash(normalizedEmail(email))],
+  );
+}
+
+async function recordFailedLogin(email: string) {
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+  const hashedEmail = emailHash(email);
+  const result = await queryAuthDatabase<{
+    failureCount: number;
+    windowStartedAt: string;
+  }>(
+    `SELECT failure_count AS "failureCount",
+            window_started_at AS "windowStartedAt"
+     FROM auth_login_limits WHERE email_hash = ?`,
+    [hashedEmail],
+  );
+  const previous = result.rows[0];
+  const inWindow =
+    previous !== undefined &&
+    now - Date.parse(previous.windowStartedAt) < loginWindowMilliseconds;
+  const failureCount = inWindow ? previous.failureCount + 1 : 1;
+  const windowStartedAt = inWindow ? previous.windowStartedAt : nowIso;
+  const lockedUntil =
+    failureCount >= 5
+      ? new Date(now + loginWindowMilliseconds).toISOString()
+      : null;
+
+  await queryAuthDatabase(
+    `INSERT INTO auth_login_limits
           (email_hash, failure_count, window_started_at, locked_until)
          VALUES (?, ?, ?, ?)
          ON CONFLICT(email_hash) DO UPDATE SET
            failure_count = excluded.failure_count,
            window_started_at = excluded.window_started_at,
            locked_until = excluded.locked_until`,
-      )
-      .run(hashedEmail, failureCount, windowStartedAt, lockedUntil);
+    [hashedEmail, failureCount, windowStartedAt, lockedUntil],
+  );
 }
 
 async function passwordHasBeenBreached(password: string): Promise<boolean> {
@@ -186,14 +300,15 @@ async function passwordHasBeenBreached(password: string): Promise<boolean> {
 
 export const auth = betterAuth({
   appName: "IMARA-CARE",
-  baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
+  baseURL: authBaseURL,
   secret: process.env.BETTER_AUTH_SECRET,
-  trustedOrigins: [process.env.BETTER_AUTH_URL ?? "http://localhost:3000"],
+  trustedOrigins: [...trustedOrigins],
   database: authDatabase,
   emailAndPassword: {
     enabled: true,
     minPasswordLength: 12,
     maxPasswordLength: 128,
+    revokeSessionsOnPasswordReset: true,
     password: {
       hash: (password) =>
         hash(password, {
@@ -216,7 +331,7 @@ export const auth = betterAuth({
         before: async (user, context) => {
           if (context?.path !== "/sign-up/email") return;
           const token = context.request?.headers.get("x-imara-invite-token");
-          const invitation = token ? findActiveInvitation(token) : undefined;
+          const invitation = token ? await findActiveInvitation(token) : undefined;
           if (!invitation || normalizedEmail(user.email) !== invitation.email) return false;
           return {
             data: {
@@ -240,6 +355,15 @@ export const auth = betterAuth({
     twoFactor({
       issuer: "IMARA-CARE",
       totpOptions: { digits: 6, period: 30 },
+      otpOptions: {
+        digits: 6,
+        period: 10,
+        allowedAttempts: 5,
+        storeOTP: "hashed",
+        sendOTP: async ({ user, otp }) => {
+          await sendTwoFactorOTP(user.email, otp);
+        },
+      },
       backupCodeOptions: {
         amount: 10,
         length: 10,
@@ -249,6 +373,18 @@ export const auth = betterAuth({
         enabled: true,
         maxFailedAttempts: 5,
         durationSeconds: 15 * 60,
+      },
+    }),
+    emailOTP({
+      otpLength: 6,
+      expiresIn: 10 * 60,
+      allowedAttempts: 5,
+      storeOTP: "hashed",
+      disableSignUp: true,
+      rateLimit: { window: 60, max: 3 },
+      sendVerificationOTP: async ({ email, otp, type }) => {
+        if (type !== "forget-password") return;
+        await sendPasswordResetOTP(email, otp);
       },
     }),
     jwt({
@@ -271,6 +407,7 @@ export const auth = betterAuth({
     customRules: {
       "/sign-in/email": { window: 15 * 60, max: 10 },
       "/sign-up/email": { window: 15 * 60, max: 10 },
+      "/two-factor/send-otp": { window: 60, max: 3 },
     },
   },
   hooks: {
@@ -289,15 +426,34 @@ export const auth = betterAuth({
       if (ctx.path === "/sign-in/email") {
         const email = normalizedEmail(ctx.body?.email);
         if (!email) return;
-        const limit = authDatabase
-          .prepare(
-            "SELECT locked_until AS lockedUntil FROM auth_login_limits WHERE email_hash = ?",
-          )
-          .get(emailHash(email)) as { lockedUntil: string | null } | undefined;
+        const result = await queryAuthDatabase<{
+          lockedUntil: string | null;
+        }>(
+          'SELECT locked_until AS "lockedUntil" FROM auth_login_limits WHERE email_hash = ?',
+          [emailHash(email)],
+        );
+        const limit = result.rows[0];
         if (limit?.lockedUntil && Date.parse(limit.lockedUntil) > Date.now()) {
-          recordAuthAudit("login.locked", { facilityId, email });
+          await recordAuthAudit("login.locked", { facilityId, email });
           throw new APIError("TOO_MANY_REQUESTS", {
             message: "Too many sign-in attempts. Try again in 15 minutes.",
+          });
+        }
+        return;
+      }
+
+      if (
+        ctx.path === "/email-otp/request-password-reset" ||
+        ctx.path === "/two-factor/send-otp"
+      ) {
+        getAuthMailer();
+        return;
+      }
+
+      if (ctx.path === "/email-otp/reset-password") {
+        if (await passwordHasBeenBreached(ctx.body?.password)) {
+          throw new APIError("BAD_REQUEST", {
+            message: "Choose a password that has not appeared in known data breaches.",
           });
         }
         return;
@@ -306,7 +462,7 @@ export const auth = betterAuth({
       if (ctx.path !== "/sign-up/email") return;
 
       const token = ctx.headers?.get("x-imara-invite-token");
-      const invitation = token ? findActiveInvitation(token) : undefined;
+      const invitation = token ? await findActiveInvitation(token) : undefined;
       if (!invitation) {
         throw new APIError("FORBIDDEN", {
           message: "An active staff invitation is required to create an account.",
@@ -338,17 +494,16 @@ export const auth = betterAuth({
     after: createAuthMiddleware(async (ctx) => {
       if (ctx.path === "/sign-up/email" && ctx.context.newSession) {
         const token = ctx.headers?.get("x-imara-invite-token");
-        const invitation = token ? findActiveInvitation(token) : undefined;
+        const invitation = token ? await findActiveInvitation(token) : undefined;
         if (!invitation) return;
 
-        authDatabase
-          .prepare(
-            `UPDATE staff_invitations
+        await queryAuthDatabase(
+          `UPDATE staff_invitations
              SET used_at = ?
              WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL`,
-          )
-          .run(new Date().toISOString(), invitation.id);
-        recordAuthAudit("invite.accepted", {
+          [new Date().toISOString(), invitation.id],
+        );
+        await recordAuthAudit("invite.accepted", {
           actorUserId: ctx.context.newSession.user.id,
           facilityId: invitation.facilityId,
           email: invitation.email,
@@ -365,13 +520,14 @@ export const auth = betterAuth({
           "twoFactorRedirect" in response &&
           response.twoFactorRedirect === true;
         if (email && session) {
-          authDatabase
-            .prepare("DELETE FROM auth_login_limits WHERE email_hash = ?")
-            .run(emailHash(email));
+          await queryAuthDatabase(
+            "DELETE FROM auth_login_limits WHERE email_hash = ?",
+            [emailHash(email)],
+          );
         } else if (email && !twoFactorChallenge) {
-          recordFailedLogin(email);
+          await recordFailedLogin(email);
         }
-        recordAuthAudit(
+        await recordAuthAudit(
           twoFactorChallenge
             ? "mfa.challenge"
             : session
@@ -385,8 +541,24 @@ export const auth = betterAuth({
         );
       }
 
+      if (ctx.path === "/email-otp/reset-password") {
+        const response = ctx.context.returned;
+        if (
+          typeof response === "object" &&
+          response !== null &&
+          "success" in response &&
+          response.success === true
+        ) {
+          await recordAuthAudit("password.changed", {
+            facilityId,
+            email: ctx.body?.email,
+          });
+        }
+      }
+
       if (
         ctx.path === "/two-factor/verify-totp" ||
+        ctx.path === "/two-factor/verify-otp" ||
         ctx.path === "/two-factor/verify-backup-code"
       ) {
         const response = ctx.context.returned;
@@ -400,30 +572,40 @@ export const auth = betterAuth({
           typeof response.user.id === "string"
         ) {
           const userId = response.user.id;
+          if (
+            ctx.path === "/two-factor/verify-otp" &&
+            "email" in response.user &&
+            typeof response.user.email === "string"
+          ) {
+            await consumeLocalTwoFactorCode(response.user.email);
+          }
           const pendingSetup =
             ctx.path === "/two-factor/verify-totp" &&
-            authDatabase
-              .prepare("SELECT user_id FROM auth_mfa_setup_pending WHERE user_id = ?")
-              .get(userId);
+            (
+              await queryAuthDatabase(
+                "SELECT user_id FROM auth_mfa_setup_pending WHERE user_id = ?",
+                [userId],
+              )
+            ).rowCount;
           if (pendingSetup) {
-            authDatabase
-              .prepare("DELETE FROM auth_mfa_setup_pending WHERE user_id = ?")
-              .run(userId);
-            recordAuthAudit("mfa.enabled", { actorUserId: userId, facilityId });
+            await queryAuthDatabase(
+              "DELETE FROM auth_mfa_setup_pending WHERE user_id = ?",
+              [userId],
+            );
+            await recordAuthAudit("mfa.enabled", { actorUserId: userId, facilityId });
           } else {
-            recordAuthAudit("login.success", { actorUserId: userId, facilityId });
+            await recordAuthAudit("login.success", { actorUserId: userId, facilityId });
           }
         }
       }
 
       if (ctx.path === "/two-factor/enable" && ctx.context.session) {
-        authDatabase
-          .prepare(
-            `INSERT INTO auth_mfa_setup_pending (user_id, started_at)
+        await queryAuthDatabase(
+          `INSERT INTO auth_mfa_setup_pending (user_id, started_at)
              VALUES (?, ?)
              ON CONFLICT(user_id) DO UPDATE SET started_at = excluded.started_at`,
-          )
-          .run(ctx.context.session.user.id, new Date().toISOString());
+          [ctx.context.session.user.id, new Date().toISOString()],
+        );
       }
     }),
   },
