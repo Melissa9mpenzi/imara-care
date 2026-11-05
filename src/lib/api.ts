@@ -26,7 +26,32 @@ export interface Patient {
   usual_payment_method: string;
   allergies: string[];
   sms_consent: boolean;
+  status: "active" | "inactive";
   created_at: string;
+}
+
+export interface PatientDetail extends Patient {
+  alt_phone: string | null;
+  national_id: string | null;
+  next_of_kin_name: string | null;
+  next_of_kin_relationship: string | null;
+  next_of_kin_phone: string | null;
+  updated_at: string;
+}
+
+export interface PatientVisit {
+  id: string;
+  visit_number: string;
+  visit_date: string;
+  status: string;
+  reason: string;
+  department: string;
+  queue_number: string | null;
+}
+
+export interface PatientProfile {
+  patient: PatientDetail;
+  visits: PatientVisit[];
 }
 
 export interface QueueItem {
@@ -156,4 +181,5 @@ export const api = {
     request<T>(path, { method: "POST", body: JSON.stringify(payload) }),
   patch: <T>(path: string, payload: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(payload) }),
+  delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 };

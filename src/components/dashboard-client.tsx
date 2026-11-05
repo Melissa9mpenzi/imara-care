@@ -11,12 +11,14 @@ import type {
   DashboardData,
   Department,
   Patient,
+  PatientDetail,
+  PatientProfile,
   QueueItem,
   Reminder,
 } from "@/lib/api";
 
 type Section = "overview" | "patients" | "appointments" | "queue" | "reminders" | "notifications";
-type Modal = "patient" | "appointment" | "checkin" | "triage" | "reminder" | null;
+type Modal = "patient" | "patient-edit" | "patient-detail" | "profile" | "appointment" | "checkin" | "triage" | "reminder" | null;
 
 type IconName =
   | "overview"
@@ -129,6 +131,67 @@ function localDateTimeValue(value: Date) {
   return date.toISOString().slice(0, 16);
 }
 
+async function encodeProfileImage(file: File) {
+  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+    throw new Error("Choose a JPEG, PNG, or WebP image.");
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    throw new Error("Choose an image smaller than 5 MB.");
+  }
+
+  const url = URL.createObjectURL(file);
+  try {
+    const image = document.createElement("img");
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("The selected image could not be opened."));
+      image.src = url;
+    });
+
+    if (
+      image.naturalWidth > 8192 ||
+      image.naturalHeight > 8192 ||
+      image.naturalWidth * image.naturalHeight > 24_000_000
+    ) {
+      throw new Error("Choose an image with dimensions no larger than 24 megapixels.");
+    }
+
+    const scale = Math.min(1, 512 / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Your browser could not process this image.");
+
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const encoded = canvas.toDataURL("image/jpeg", 0.82);
+    if (encoded.length > 700 * 1024) {
+      throw new Error("This image could not be compressed enough. Choose another photo.");
+    }
+    return encoded;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function ProfileAvatarContents({
+  name,
+  image,
+}: {
+  name: string;
+  image?: string | null;
+}) {
+  if (image) {
+    return <Image src={image} alt="" width={40} height={40} unoptimized className="profile-avatar-image" />;
+  }
+  return name
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
+
 function ageLabel(patient: Patient) {
   if (patient.date_of_birth) {
     const birth = new Date(patient.date_of_birth);
@@ -143,6 +206,33 @@ function ageLabel(patient: Patient) {
     return `${age} yrs`;
   }
   return patient.estimated_age == null ? "Age not set" : `~${patient.estimated_age} yrs`;
+}
+
+function patientPayload(form: FormData) {
+  const dob = String(form.get("date_of_birth") ?? "");
+  const age = String(form.get("estimated_age") ?? "");
+  return {
+    first_name: form.get("first_name"),
+    last_name: form.get("last_name"),
+    other_names: form.get("other_names") || null,
+    sex: form.get("sex"),
+    date_of_birth: dob || null,
+    estimated_age: age ? Number(age) : null,
+    phone: form.get("phone") || null,
+    alt_phone: form.get("alt_phone") || null,
+    email: form.get("email") || null,
+    national_id: form.get("national_id") || null,
+    address: form.get("address") || null,
+    next_of_kin_name: form.get("next_of_kin_name") || null,
+    next_of_kin_relationship: form.get("next_of_kin_relationship") || null,
+    next_of_kin_phone: form.get("next_of_kin_phone") || null,
+    usual_payment_method: form.get("usual_payment_method"),
+    allergies: String(form.get("allergies") ?? "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean),
+    sms_consent: form.get("sms_consent") === "on",
+  };
 }
 
 export default function DashboardClient() {
@@ -160,15 +250,27 @@ export default function DashboardClient() {
   const [facilityTimezone, setFacilityTimezone] = useState("Africa/Kampala");
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [patientProfile, setPatientProfile] = useState<PatientProfile | null>(null);
   const [selectedVisit, setSelectedVisit] = useState<QueueItem | null>(null);
   const [search, setSearch] = useState("");
+  const [showArchivedPatients, setShowArchivedPatients] = useState(false);
   const [queueDepartment, setQueueDepartment] = useState("all");
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(true);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [saving, setSaving] = useState(false);
+  const [profilePhotoPreview, setProfilePhotoPreview] = useState<string | null>(null);
+  const [removeProfilePhoto, setRemoveProfilePhoto] = useState(false);
   const globalSearchRef = useRef<HTMLInputElement>(null);
+  const profilePhotoInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(
+    () => () => {
+      if (profilePhotoPreview) URL.revokeObjectURL(profilePhotoPreview);
+    },
+    [profilePhotoPreview],
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -184,7 +286,9 @@ export default function DashboardClient() {
         await Promise.all([
           api.get<DashboardData>("/dashboard"),
           api.get<{ departments: Department[]; timezone: string }>("/facility"),
-          api.get<Patient[]>("/patients?limit=100"),
+          api.get<Patient[]>(
+            `/patients?limit=100&include_archived=${showArchivedPatients}`,
+          ),
           api.get<Appointment[]>("/appointments"),
           api.get<QueueItem[]>("/queues?status=all"),
           api.get<Reminder[]>("/reminders?status=all"),
@@ -207,7 +311,7 @@ export default function DashboardClient() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [showArchivedPatients]);
 
   useEffect(() => {
     void refresh();
@@ -248,7 +352,7 @@ export default function DashboardClient() {
     const timer = window.setTimeout(async () => {
       try {
         const results = await api.get<Patient[]>(
-          `/patients?q=${encodeURIComponent(search)}&limit=100`,
+          `/patients?q=${encodeURIComponent(search)}&limit=100&include_archived=${showArchivedPatients}`,
         );
         setPatients(results);
       } catch {
@@ -256,7 +360,7 @@ export default function DashboardClient() {
       }
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [search]);
+  }, [search, showArchivedPatients]);
 
   const filteredPatients = useMemo(() => {
     if (!search.trim()) return patients;
@@ -304,32 +408,93 @@ export default function DashboardClient() {
   }
 
   async function registerPatient(form: FormData) {
-    const dob = String(form.get("date_of_birth") ?? "");
-    const age = String(form.get("estimated_age") ?? "");
-    const created = await api.post<Patient>("/patients", {
-      first_name: form.get("first_name"),
-      last_name: form.get("last_name"),
-      other_names: form.get("other_names") || null,
-      sex: form.get("sex"),
-      date_of_birth: dob || null,
-      estimated_age: age ? Number(age) : null,
-      phone: form.get("phone") || null,
-      alt_phone: form.get("alt_phone") || null,
-      email: form.get("email") || null,
-      national_id: form.get("national_id") || null,
-      address: form.get("address") || null,
-      next_of_kin_name: form.get("next_of_kin_name") || null,
-      next_of_kin_relationship: form.get("next_of_kin_relationship") || null,
-      next_of_kin_phone: form.get("next_of_kin_phone") || null,
-      usual_payment_method: form.get("usual_payment_method"),
-      allergies: String(form.get("allergies") ?? "")
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean),
-      sms_consent: form.get("sms_consent") === "on",
-    });
+    const payload = patientPayload(form);
+    if (modal === "patient-edit" && patientProfile) {
+      const updated = await api.patch<PatientDetail>(
+        `/patients/${encodeURIComponent(patientProfile.patient.id)}`,
+        payload,
+      );
+      setSelectedPatient(updated);
+      setSuccess(`Patient ${updated.patient_number} updated successfully.`);
+      return;
+    }
+
+    const created = await api.post<Patient>("/patients", payload);
     setSelectedPatient(created);
     setSuccess(`Patient ${created.patient_number} registered successfully.`);
+  }
+
+  async function loadPatientProfile(patient: Patient, nextModal: "patient-detail" | "patient-edit") {
+    setSelectedPatient(patient);
+    setPatientProfile(null);
+    setError("");
+    try {
+      const profile = await api.get<PatientProfile>(
+        `/patients/${encodeURIComponent(patient.id)}`,
+      );
+      setPatientProfile(profile);
+      setModal(nextModal);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load this patient record.");
+    }
+  }
+
+  async function updatePatientStatus(patient: Patient, status: "active" | "inactive") {
+    if (status === "inactive" && !window.confirm(
+      `Archive ${displayName(patient)}? Their patient record and clinical history will be retained.`,
+    )) {
+      return;
+    }
+    setError("");
+    setSuccess("");
+    try {
+      if (status === "inactive") {
+        await api.delete<{ id: string; status: string }>(
+          `/patients/${encodeURIComponent(patient.id)}`,
+        );
+        setSuccess(`${patient.patient_number} archived. Their clinical history has been retained.`);
+      } else {
+        await api.patch<PatientDetail>(
+          `/patients/${encodeURIComponent(patient.id)}`,
+          { status: "active" },
+        );
+        setSuccess(`${patient.patient_number} restored to the active patient list.`);
+      }
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not update this patient record.");
+    }
+  }
+
+  async function updateProfile(form: FormData) {
+    const name = String(form.get("name") ?? "").trim();
+    if (!name || name.length > 160) {
+      throw new Error("Enter a name between 1 and 160 characters.");
+    }
+    const photo = form.get("image");
+    const image =
+      photo instanceof File && photo.size > 0
+        ? await encodeProfileImage(photo)
+        : removeProfilePhoto
+          ? null
+          : undefined;
+    const result = await authClient.updateUser({
+      name,
+      ...(image !== undefined ? { image } : {}),
+    });
+    if (result.error) {
+      throw new Error(result.error.message || "Could not update your profile.");
+    }
+    setProfilePhotoPreview(null);
+    setRemoveProfilePhoto(false);
+    setSuccess("Your profile was updated.");
+  }
+
+  function openProfileModal() {
+    setProfilePhotoPreview(null);
+    setRemoveProfilePhoto(false);
+    if (profilePhotoInputRef.current) profilePhotoInputRef.current.value = "";
+    setModal("profile");
   }
 
   async function bookAppointment(form: FormData) {
@@ -600,22 +765,26 @@ export default function DashboardClient() {
           <span className="chevron">›</span>
         </div>
         <div className="user-profile">
-          <div className="avatar">
-            {(session?.user.name ?? "Staff")
-              .split(/\s+/)
-              .map((part) => part[0])
-              .join("")
-              .slice(0, 2)
-              .toUpperCase()}
-          </div>
-          <div className="user-copy">
-            <strong>{session?.user.name ?? "Staff member"}</strong>
-            <span>
-              {(session?.user.staffRole ?? session?.user.role ?? "staff")
-                .replaceAll("_", " ")
-                .replace(/\b\w/g, (letter) => letter.toUpperCase())}
-            </span>
-          </div>
+          <button
+            className="user-profile-trigger"
+            onClick={openProfileModal}
+            aria-label="View and edit your profile"
+          >
+            <div className="avatar">
+              <ProfileAvatarContents
+                name={session?.user.name ?? "Staff"}
+                image={session?.user.image}
+              />
+            </div>
+            <div className="user-copy">
+              <strong>{session?.user.name ?? "Staff member"}</strong>
+              <span>
+                {(session?.user.staffRole ?? session?.user.role ?? "staff")
+                  .replaceAll("_", " ")
+                  .replace(/\b\w/g, (letter) => letter.toUpperCase())}
+              </span>
+            </div>
+          </button>
           <button
             className="icon-button"
             aria-label="Sign out"
@@ -677,14 +846,16 @@ export default function DashboardClient() {
                   />
                 )}
               </div>
-              <div className="topbar-avatar">
-              {(session?.user.name ?? "Staff")
-                .split(/\s+/)
-                .map((part) => part[0])
-                .join("")
-                .slice(0, 2)
-                .toUpperCase()}
-            </div>
+              <button
+                className="topbar-avatar topbar-avatar-button"
+                aria-label="View and edit your profile"
+                onClick={openProfileModal}
+              >
+                <ProfileAvatarContents
+                  name={session?.user.name ?? "Staff"}
+                  image={session?.user.image}
+                />
+              </button>
           </div>
         </header>
 
@@ -725,8 +896,14 @@ export default function DashboardClient() {
             <PatientsView
               patients={filteredPatients}
               search={search}
+              showArchived={showArchivedPatients}
               onSearch={setSearch}
+              onToggleArchived={() => setShowArchivedPatients((value) => !value)}
               onRegister={() => setModal("patient")}
+              onView={(patient) => void loadPatientProfile(patient, "patient-detail")}
+              onEdit={(patient) => void loadPatientProfile(patient, "patient-edit")}
+              onArchive={(patient) => void updatePatientStatus(patient, "inactive")}
+              onRestore={(patient) => void updatePatientStatus(patient, "active")}
               onCheckIn={(patient) => {
                 setSelectedPatient(patient);
                 setModal("checkin");
@@ -778,33 +955,96 @@ export default function DashboardClient() {
         <div className="modal-backdrop" onMouseDown={(event) => {
           if (event.target === event.currentTarget) setModal(null);
         }}>
-          {modal === "patient" && (
-            <ModalFrame title="Register a patient" subtitle="Create a shared, lifelong patient record." onClose={() => setModal(null)}>
-              <form className="form-grid" onSubmit={(event) => void submit(event, registerPatient)}>
-                <label>First name<input name="first_name" required autoFocus /></label>
-                <label>Last name<input name="last_name" required /></label>
-                <label>Other names <span className="optional">(optional)</span><input name="other_names" /></label>
-                <label>Sex<select name="sex" defaultValue="female"><option value="female">Female</option><option value="male">Male</option><option value="other">Other</option><option value="not_specified">Prefer not to say</option></select></label>
-                <label>Date of birth<input name="date_of_birth" type="date" /></label>
-                <label>Estimated age <span className="optional">if DOB unknown</span><input name="estimated_age" type="number" min="0" max="125" /></label>
-                <label>Phone<input name="phone" type="tel" /></label>
-                <label>Alternative phone<input name="alt_phone" type="tel" /></label>
-                <label>Email<input name="email" type="email" /></label>
-                <label>National ID<input name="national_id" /></label>
-                <label className="span-two">Address / village<input name="address" /></label>
-                <div className="form-divider span-two">NEXT OF KIN</div>
-                <label>Full name<input name="next_of_kin_name" /></label>
-                <label>Relationship<input name="next_of_kin_relationship" /></label>
-                <label>Phone<input name="next_of_kin_phone" type="tel" /></label>
-                <label>Usual payment method<select name="usual_payment_method"><option value="cash">Cash</option><option value="insurance">Insurance</option><option value="mobile_money">Mobile money</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></label>
-                <label className="span-two">Known allergies <span className="optional">separate with commas</span><input name="allergies" placeholder="e.g. penicillin, latex" /></label>
-                <label className="check-label span-two"><input name="sms_consent" type="checkbox" /> Patient agrees to receive appointment reminders by SMS</label>
+          {modal === "profile" && (
+            <ModalFrame title="My profile" subtitle="View and update your staff profile." onClose={() => setModal(null)}>
+              <form className="form-grid" onSubmit={(event) => void submit(event, updateProfile)}>
+                <div className="profile-photo-field span-two">
+                  <div className="profile-photo-preview">
+                    <ProfileAvatarContents
+                      name={session?.user.name ?? "Staff"}
+                      image={
+                        removeProfilePhoto
+                          ? null
+                          : profilePhotoPreview ?? session?.user.image
+                      }
+                    />
+                  </div>
+                  <div className="profile-photo-actions">
+                    <label className="profile-photo-upload">
+                      Profile photo
+                      <input
+                        ref={profilePhotoInputRef}
+                        type="file"
+                        name="image"
+                        accept="image/jpeg,image/png,image/webp"
+                        onChange={(event) => {
+                          const file = event.currentTarget.files?.[0];
+                          setProfilePhotoPreview(file ? URL.createObjectURL(file) : null);
+                          if (file) setRemoveProfilePhoto(false);
+                        }}
+                      />
+                    </label>
+                    <span className="form-note">JPEG, PNG, or WebP. Maximum 5 MB.</span>
+                    {(session?.user.image || profilePhotoPreview) && !removeProfilePhoto ? (
+                      <button
+                        type="button"
+                        className="profile-photo-remove"
+                        onClick={() => {
+                          if (profilePhotoInputRef.current) profilePhotoInputRef.current.value = "";
+                          setProfilePhotoPreview(null);
+                          setRemoveProfilePhoto(true);
+                        }}
+                      >
+                        Remove photo
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                <label className="span-two">Full name<input name="name" defaultValue={session?.user.name ?? ""} maxLength={160} required autoFocus /></label>
+                <label className="span-two">Work email<input type="email" value={session?.user.email ?? ""} readOnly /></label>
+                <label className="span-two">Staff role<input value={(session?.user.staffRole ?? session?.user.role ?? "staff").replaceAll("_", " ")} readOnly /></label>
+                <p className="form-note span-two">Staff accounts are created by invitation. To change your email or access, contact your administrator.</p>
                 <div className="modal-footer span-two">
                   <button type="button" className="button button-quiet" onClick={() => setModal(null)}>Cancel</button>
-                  <button className="button button-primary" disabled={saving}>{saving ? "Saving…" : "Register patient"}</button>
+                  <button className="button button-primary" disabled={saving}>{saving ? "Saving…" : "Save profile"}</button>
                 </div>
-                <p className="form-note span-two">Date of birth or estimated age is required. Potential duplicate records are flagged before saving.</p>
               </form>
+            </ModalFrame>
+          )}
+
+          {(modal === "patient" || modal === "patient-edit") && (
+            <ModalFrame
+              title={modal === "patient-edit" ? "Edit patient record" : "Register a patient"}
+              subtitle={modal === "patient-edit" ? "Update this patient's demographic and contact details." : "Create a shared, lifelong patient record."}
+              onClose={() => setModal(null)}
+            >
+              <PatientForm
+                patient={modal === "patient-edit" ? patientProfile?.patient ?? null : null}
+                saving={saving}
+                onCancel={() => setModal(null)}
+                onSubmit={(event) => void submit(event, registerPatient)}
+              />
+            </ModalFrame>
+          )}
+
+          {modal === "patient-detail" && patientProfile && (
+            <ModalFrame
+              title={displayName(patientProfile.patient)}
+              subtitle={`${patientProfile.patient.patient_number} · ${patientProfile.patient.status === "active" ? "Active record" : "Archived record"}`}
+              onClose={() => setModal(null)}
+            >
+              <PatientProfileDetails
+                profile={patientProfile}
+                onEdit={() => setModal("patient-edit")}
+                onArchive={() => {
+                  setModal(null);
+                  void updatePatientStatus(patientProfile.patient, "inactive");
+                }}
+                onRestore={() => {
+                  setModal(null);
+                  void updatePatientStatus(patientProfile.patient, "active");
+                }}
+              />
             </ModalFrame>
           )}
 
@@ -1244,29 +1484,82 @@ function RemindersView({
   );
 }
 
-function PatientsView({ patients, search, onSearch, onRegister, onCheckIn }: { patients: Patient[]; search: string; onSearch: (value: string) => void; onRegister: () => void; onCheckIn: (patient: Patient) => void }) {
+function PatientsView({
+  patients,
+  search,
+  showArchived,
+  onSearch,
+  onToggleArchived,
+  onRegister,
+  onView,
+  onEdit,
+  onArchive,
+  onRestore,
+  onCheckIn,
+}: {
+  patients: Patient[];
+  search: string;
+  showArchived: boolean;
+  onSearch: (value: string) => void;
+  onToggleArchived: () => void;
+  onRegister: () => void;
+  onView: (patient: Patient) => void;
+  onEdit: (patient: Patient) => void;
+  onArchive: (patient: Patient) => void;
+  onRestore: (patient: Patient) => void;
+  onCheckIn: (patient: Patient) => void;
+}) {
   return (
     <>
       <div className="page-heading">
-        <div><div className="eyebrow">PATIENT RECORDS</div><h1>Patients</h1><p>Find returning patients or create a new record.</p></div>
-        <button className="button button-primary" onClick={onRegister}><span className="button-plus">+</span> Register patient</button>
+        <div><div className="eyebrow">PATIENT RECORDS</div><h1>Patients</h1><p>View, update and safely manage patient records.</p></div>
+        {!showArchived && <button className="button button-primary" onClick={onRegister}><span className="button-plus">+</span> Register patient</button>}
       </div>
       <section className="panel directory-panel">
         <div className="directory-toolbar">
           <div className="search-field"><span>⌕</span><input value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Search name, patient number or phone…" autoComplete="off" /></div>
-          <span className="result-count">{patients.length} records</span>
+          <div className="patient-directory-actions">
+            <button className="small-outline" onClick={onToggleArchived}>
+              {showArchived ? "View active patients" : "View archived"}
+            </button>
+            <span className="result-count">{patients.length} {showArchived ? "archived" : "active"} records</span>
+          </div>
         </div>
-        <PatientTable patients={patients} onCheckIn={onCheckIn} />
+        <PatientTable
+          patients={patients}
+          showArchived={showArchived}
+          onView={onView}
+          onEdit={onEdit}
+          onArchive={onArchive}
+          onRestore={onRestore}
+          onCheckIn={onCheckIn}
+        />
       </section>
     </>
   );
 }
 
-function PatientTable({ patients, onCheckIn }: { patients: Patient[]; onCheckIn: (patient: Patient) => void }) {
+function PatientTable({
+  patients,
+  showArchived,
+  onView,
+  onEdit,
+  onArchive,
+  onRestore,
+  onCheckIn,
+}: {
+  patients: Patient[];
+  showArchived: boolean;
+  onView: (patient: Patient) => void;
+  onEdit: (patient: Patient) => void;
+  onArchive: (patient: Patient) => void;
+  onRestore: (patient: Patient) => void;
+  onCheckIn: (patient: Patient) => void;
+}) {
   return (
     <div className="table-scroll">
       <table className="data-table">
-        <thead><tr><th>Patient</th><th>Patient number</th><th>Age / sex</th><th>Phone</th><th>Payment</th><th>Allergies</th><th /></tr></thead>
+        <thead><tr><th>Patient</th><th>Patient number</th><th>Age / sex</th><th>Phone</th><th>Payment</th><th>Allergies</th><th>Record actions</th></tr></thead>
         <tbody>
           {patients.map((patient) => (
             <tr key={patient.id}>
@@ -1276,10 +1569,24 @@ function PatientTable({ patients, onCheckIn }: { patients: Patient[]; onCheckIn:
               <td>{patient.phone || <span className="muted">—</span>}</td>
               <td><span className="payment-tag">{patient.usual_payment_method.replace("_", " ")}</span></td>
               <td>{patient.allergies.length ? <span className="allergy-tag">{patient.allergies.join(", ")}</span> : <span className="muted">None recorded</span>}</td>
-              <td><button className="small-outline" onClick={() => onCheckIn(patient)}>Check in</button></td>
+              <td>
+                <div className="patient-row-actions">
+                  <button className="small-outline" onClick={() => onView(patient)}>View</button>
+                  {!showArchived && (
+                    <>
+                      <button className="small-outline" onClick={() => onEdit(patient)}>Edit</button>
+                      <button className="small-outline" onClick={() => onCheckIn(patient)}>Check in</button>
+                      <button className="small-outline patient-archive-action" onClick={() => onArchive(patient)}>Archive</button>
+                    </>
+                  )}
+                  {showArchived && (
+                    <button className="small-outline" onClick={() => onRestore(patient)}>Restore</button>
+                  )}
+                </div>
+              </td>
             </tr>
           ))}
-          {!patients.length && <tr><td colSpan={7}><EmptyState title="No patients found" detail="Try another search or register a new patient." /></td></tr>}
+          {!patients.length && <tr><td colSpan={7}><EmptyState title={showArchived ? "No archived patients" : "No patients found"} detail={showArchived ? "Archived patient records will appear here." : "Try another search or register a new patient."} /></td></tr>}
         </tbody>
       </table>
     </div>
@@ -1340,6 +1647,114 @@ function QueueView({ items, departments, department, onDepartmentChange, onCall,
       </section>
       <div className="queue-footnote"><span className="connection-dot" /> Queue refreshes automatically. Emergency and urgent visits are prioritised.</div>
     </>
+  );
+}
+
+function PatientForm({
+  patient,
+  saving,
+  onCancel,
+  onSubmit,
+}: {
+  patient: PatientDetail | null;
+  saving: boolean;
+  onCancel: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <form className="form-grid" onSubmit={onSubmit}>
+      <label>First name<input name="first_name" required autoFocus defaultValue={patient?.first_name ?? ""} /></label>
+      <label>Last name<input name="last_name" required defaultValue={patient?.last_name ?? ""} /></label>
+      <label>Other names <span className="optional">(optional)</span><input name="other_names" defaultValue={patient?.other_names ?? ""} /></label>
+      <label>Sex<select name="sex" defaultValue={patient?.sex ?? "female"}><option value="female">Female</option><option value="male">Male</option><option value="other">Other</option><option value="not_specified">Prefer not to say</option></select></label>
+      <label>Date of birth<input name="date_of_birth" type="date" defaultValue={patient?.date_of_birth?.slice(0, 10) ?? ""} /></label>
+      <label>Estimated age <span className="optional">if DOB unknown</span><input name="estimated_age" type="number" min="0" max="125" defaultValue={patient?.estimated_age ?? ""} /></label>
+      <label>Phone<input name="phone" type="tel" defaultValue={patient?.phone ?? ""} /></label>
+      <label>Alternative phone<input name="alt_phone" type="tel" defaultValue={patient?.alt_phone ?? ""} /></label>
+      <label>Email<input name="email" type="email" defaultValue={patient?.email ?? ""} /></label>
+      <label>National ID<input name="national_id" defaultValue={patient?.national_id ?? ""} /></label>
+      <label className="span-two">Address / village<input name="address" defaultValue={patient?.address ?? ""} /></label>
+      <div className="form-divider span-two">NEXT OF KIN</div>
+      <label>Full name<input name="next_of_kin_name" defaultValue={patient?.next_of_kin_name ?? ""} /></label>
+      <label>Relationship<input name="next_of_kin_relationship" defaultValue={patient?.next_of_kin_relationship ?? ""} /></label>
+      <label>Phone<input name="next_of_kin_phone" type="tel" defaultValue={patient?.next_of_kin_phone ?? ""} /></label>
+      <label>Usual payment method<select name="usual_payment_method" defaultValue={patient?.usual_payment_method ?? "cash"}><option value="cash">Cash</option><option value="insurance">Insurance</option><option value="mobile_money">Mobile money</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></label>
+      <label className="span-two">Known allergies <span className="optional">separate with commas</span><input name="allergies" placeholder="e.g. penicillin, latex" defaultValue={patient?.allergies.join(", ") ?? ""} /></label>
+      <label className="check-label span-two"><input name="sms_consent" type="checkbox" defaultChecked={patient?.sms_consent ?? false} /> Patient agrees to receive appointment reminders by SMS</label>
+      <div className="modal-footer span-two">
+        <button type="button" className="button button-quiet" onClick={onCancel}>Cancel</button>
+        <button className="button button-primary" disabled={saving}>{saving ? "Saving…" : patient ? "Save changes" : "Register patient"}</button>
+      </div>
+      {!patient && <p className="form-note span-two">Date of birth or estimated age is required. Potential duplicate records are flagged before saving.</p>}
+    </form>
+  );
+}
+
+function PatientProfileDetails({
+  profile,
+  onEdit,
+  onArchive,
+  onRestore,
+}: {
+  profile: PatientProfile;
+  onEdit: () => void;
+  onArchive: () => void;
+  onRestore: () => void;
+}) {
+  const { patient, visits } = profile;
+  const details = [
+    ["Date of birth", patient.date_of_birth ? formatDate(patient.date_of_birth) : "Not recorded"],
+    ["Estimated age", patient.estimated_age == null ? "Not recorded" : `About ${patient.estimated_age} years`],
+    ["Sex", patient.sex.replaceAll("_", " ")],
+    ["Phone", patient.phone ?? "Not recorded"],
+    ["Alternative phone", patient.alt_phone ?? "Not recorded"],
+    ["Email", patient.email ?? "Not recorded"],
+    ["National ID", patient.national_id ?? "Not recorded"],
+    ["Address", patient.address ?? "Not recorded"],
+    ["Next of kin", patient.next_of_kin_name ?? "Not recorded"],
+    ["Relationship", patient.next_of_kin_relationship ?? "Not recorded"],
+    ["Next-of-kin phone", patient.next_of_kin_phone ?? "Not recorded"],
+    ["Payment method", patient.usual_payment_method.replaceAll("_", " ")],
+    ["Allergies", patient.allergies.length ? patient.allergies.join(", ") : "None recorded"],
+    ["SMS reminders", patient.sms_consent ? "Consent recorded" : "Not opted in"],
+  ];
+
+  return (
+    <div className="patient-profile-details">
+      <dl className="patient-detail-grid">
+        {details.map(([label, value]) => (
+          <div className="patient-detail-item" key={label}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <section className="patient-history">
+        <h3>Recent visits</h3>
+        {visits.length ? (
+          <div className="patient-history-list">
+            {visits.map((visit) => (
+              <div className="patient-history-row" key={visit.id}>
+                <span><strong>{visit.visit_number}</strong><small>{formatDate(visit.visit_date)} · {visit.department}</small></span>
+                <span><strong>{visit.status.replaceAll("_", " ")}</strong><small>{visit.reason}</small></span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="patient-history-empty">No visit history recorded.</p>
+        )}
+      </section>
+      <div className="modal-footer patient-profile-actions">
+        {patient.status === "active" ? (
+          <>
+            <button type="button" className="button button-quiet patient-archive-action" onClick={onArchive}>Archive record</button>
+            <button type="button" className="button button-primary" onClick={onEdit}>Edit patient</button>
+          </>
+        ) : (
+          <button type="button" className="button button-primary" onClick={onRestore}>Restore patient</button>
+        )}
+      </div>
+    </div>
   );
 }
 
