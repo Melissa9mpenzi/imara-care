@@ -1,5 +1,12 @@
 import "dotenv/config";
-import { defineConfig, env } from "prisma/config";
+import { defineConfig } from "prisma/config";
+
+const isGenerateCommand = process.argv.some((argument) => argument === "generate");
+const databaseUrl = process.env.DATABASE_URL;
+
+if (!databaseUrl && !isGenerateCommand) {
+  throw new Error("DATABASE_URL is required for Prisma database operations.");
+}
 
 export default defineConfig({
   schema: "prisma/schema.prisma",
@@ -8,6 +15,7 @@ export default defineConfig({
     seed: "tsx prisma/seed.ts",
   },
   datasource: {
-    url: env("DATABASE_URL"),
+    // Client generation needs the schema only and never connects to this URL.
+    url: databaseUrl ?? "postgresql://localhost:5432/imara_care",
   },
 });
