@@ -3,9 +3,12 @@ import { Pool, type QueryResult, type QueryResultRow } from "pg";
 
 loadEnvConfig(process.cwd());
 
-const connectionString = process.env.AUTH_DATABASE_URL;
+const connectionString =
+  process.env.AUTH_DATABASE_URL ?? process.env.DATABASE_URL;
 if (!connectionString) {
-  throw new Error("AUTH_DATABASE_URL must point to the PostgreSQL auth schema.");
+  throw new Error(
+    "Set AUTH_DATABASE_URL or DATABASE_URL to a PostgreSQL connection string.",
+  );
 }
 
 export const authDatabase = new Pool({
