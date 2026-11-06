@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "prisma generate",
+    "prebuild": "prisma generate && node scripts/prepare-auth-schema.mjs",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
