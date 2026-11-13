@@ -53,10 +53,6 @@ export default function LoginForm() {
         <div className="auth-story-orbit auth-story-orbit-one" aria-hidden="true" />
         <div className="auth-story-orbit auth-story-orbit-two" aria-hidden="true" />
         <div className="auth-story-content">
-          <a className="auth-brand" href="/" aria-label="IMARA-CARE home">
-            <img src="/images/Imara-Care%20Favicon.png" alt="" />
-            <span>IMARA<span>-CARE</span></span>
-          </a>
           <div className="auth-story-copy">
             <span className="auth-story-kicker">
               <span className="auth-kicker-dot" />
