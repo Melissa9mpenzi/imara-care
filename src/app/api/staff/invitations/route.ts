@@ -3,7 +3,7 @@ import nodemailer from "nodemailer";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import {
-  auth,
+  getAuthSession,
   invitationTokenHash,
   recordAuthAudit,
   requiresMfa,
@@ -15,12 +15,17 @@ export const runtime = "nodejs";
 const staffRoles = new Set([
   "facility_admin",
   "medical_director",
+  "department_head",
   "clinician",
   "pharmacist",
   "reception",
   "laboratory",
   "pharmacy",
   "cashier",
+  "billing",
+  "theatre",
+  "nurse",
+  "records",
 ]);
 
 function getMailer() {
@@ -53,11 +58,41 @@ function hasTrustedOrigin(request: Request) {
   return request.headers.get("origin") === expectedOrigin;
 }
 
+export async function GET() {
+  const session = await getAuthSession(await headers());
+  if (!session) {
+    return NextResponse.json({ detail: "Sign in is required." }, { status: 401 });
+  }
+  if (session.user.role !== "admin" && session.user.staffRole !== "facility_admin") {
+    return NextResponse.json({ detail: "Administrator access is required." }, { status: 403 });
+  }
+  if (
+    requiresMfa(session.user.staffRole ?? session.user.role) &&
+    session.user.twoFactorEnabled !== true
+  ) {
+    return NextResponse.json(
+      { detail: "Set up an authenticator before managing staff invitations." },
+      { status: 403 },
+    );
+  }
+
+  const result = await queryAuthDatabase<{ code: string; name: string }>(
+    `SELECT d.code, d.name
+       FROM public.departments d
+       JOIN public.facilities f ON f.id = d.facility_id
+      WHERE f.code = ? AND d.active = TRUE
+     UNION ALL SELECT 'BILL', 'Billing & insurance'
+     ORDER BY name`,
+    [process.env.IMARA_FACILITY_ID ?? "IM"],
+  );
+  return NextResponse.json({ departments: result.rows });
+}
+
 export async function POST(request: Request) {
   if (!hasTrustedOrigin(request)) {
     return NextResponse.json({ detail: "Request origin is not allowed." }, { status: 403 });
   }
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getAuthSession(await headers());
   if (!session) {
     return NextResponse.json({ detail: "Sign in is required." }, { status: 401 });
   }
@@ -82,15 +117,47 @@ export async function POST(request: Request) {
   const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
   const fullName = typeof input.fullName === "string" ? input.fullName.trim() : "";
   const staffRole = typeof input.staffRole === "string" ? input.staffRole : "";
+  const departmentCode =
+    typeof input.departmentCode === "string" ? input.departmentCode.trim().toUpperCase() : "";
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
     return NextResponse.json({ detail: "Enter a valid staff email address." }, { status: 422 });
   }
   if (!fullName || fullName.length > 160 || !staffRoles.has(staffRole)) {
     return NextResponse.json({ detail: "Provide a name and a valid staff role." }, { status: 422 });
   }
+  const roleDepartment: Record<string, string> = {
+    pharmacist: "PHARM",
+    pharmacy: "PHARM",
+    laboratory: "LAB",
+    cashier: "BILL",
+    billing: "BILL",
+    theatre: "THR",
+  };
+  if (
+    !departmentCode ||
+    (roleDepartment[staffRole] && roleDepartment[staffRole] !== departmentCode)
+  ) {
+    return NextResponse.json(
+      { detail: "Choose a department that matches the staff role." },
+      { status: 422 },
+    );
+  }
 
   const facilityId = process.env.IMARA_FACILITY_ID ?? "IM";
   const facilityName = process.env.IMARA_FACILITY_NAME ?? "Imara Care Clinic";
+  const departmentResult = await queryAuthDatabase<{ code: string; name: string }>(
+    `SELECT d.code, d.name
+       FROM public.departments d
+       JOIN public.facilities f ON f.id = d.facility_id
+      WHERE d.code = ? AND f.code = ? AND d.active = TRUE
+     UNION ALL SELECT 'BILL', 'Billing & insurance'
+       WHERE ? = 'BILL'`,
+    [departmentCode, facilityId, departmentCode],
+  );
+  const department = departmentResult.rows[0];
+  if (!department) {
+    return NextResponse.json({ detail: "Choose an active department." }, { status: 422 });
+  }
   const mailer = getMailer();
   if (!mailer && process.env.NODE_ENV === "production") {
     return NextResponse.json(
@@ -116,15 +183,16 @@ export async function POST(request: Request) {
   );
   await queryAuthDatabase(
     `INSERT INTO staff_invitations
-        (id, token_hash, email, full_name, staff_role, facility_id, created_by,
-         created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, token_hash, email, full_name, staff_role, department_code, facility_id,
+         created_by, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       invitationTokenHash(rawToken),
       email,
       fullName,
       staffRole,
+      departmentCode,
       facilityId,
       session.user.id,
       createdAt,
@@ -138,7 +206,7 @@ export async function POST(request: Request) {
         from: mailer.from,
         to: email,
         subject: `${facilityName} invited you to IMARA-CARE`,
-        text: `${fullName},\n\nYou have been invited to join ${facilityName} as ${staffRole.replaceAll("_", " ")}.\n\nAccept the invitation within 48 hours:\n${invitationUrl}\n`,
+        text: `${fullName},\n\nYou have been invited to join ${facilityName} as ${staffRole.replaceAll("_", " ")} in ${department.name}.\n\nAccept the invitation within 48 hours:\n${invitationUrl}\n`,
       });
     } catch (error) {
       await queryAuthDatabase(
@@ -162,6 +230,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     id,
     email,
+    departmentName: department.name,
     expiresAt,
     ...(process.env.NODE_ENV === "production" ? {} : { invitationUrl }),
   });
@@ -171,7 +240,7 @@ export async function DELETE(request: Request) {
   if (!hasTrustedOrigin(request)) {
     return NextResponse.json({ detail: "Request origin is not allowed." }, { status: 403 });
   }
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getAuthSession(await headers());
   if (!session) {
     return NextResponse.json({ detail: "Sign in is required." }, { status: 401 });
   }

@@ -5,6 +5,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { authClient } from "@/lib/auth-client";
 import { api } from "@/lib/api";
+import DepartmentWorkspace, {
+  canAccessDepartmentModule,
+  type DepartmentModule,
+} from "@/components/department-workspaces";
 import type {
   AppNotification,
   Appointment,
@@ -17,7 +21,7 @@ import type {
   Reminder,
 } from "@/lib/api";
 
-type Section = "overview" | "patients" | "appointments" | "queue" | "reminders" | "notifications";
+type Section = "overview" | "patients" | "appointments" | "queue" | "reminders" | "notifications" | DepartmentModule;
 type Modal = "patient" | "patient-edit" | "patient-detail" | "profile" | "appointment" | "checkin" | "triage" | "reminder" | null;
 
 type IconName =
@@ -51,13 +55,17 @@ const sectionLabels: Record<Section, string> = {
   queue: "Queue & triage",
   reminders: "My reminders",
   notifications: "Notifications",
+  pharmacy: "Pharmacy",
+  laboratory: "Laboratory",
+  billing: "Billing & insurance",
+  theatre: "Theatre",
 };
 
-const plannedModules: { label: string; icon: IconName }[] = [
-  { label: "Pharmacy", icon: "pharmacy" },
-  { label: "Laboratory", icon: "laboratory" },
-  { label: "Billing & insurance", icon: "billing" },
-  { label: "Theatre", icon: "theatre" },
+const departmentModules: { id: DepartmentModule; label: string; icon: IconName }[] = [
+  { id: "pharmacy", label: "Pharmacy", icon: "pharmacy" },
+  { id: "laboratory", label: "Laboratory", icon: "laboratory" },
+  { id: "billing", label: "Billing & insurance", icon: "billing" },
+  { id: "theatre", label: "Theatre", icon: "theatre" },
 ];
 
 function AppIcon({ name, size = 20 }: { name: IconName; size?: number }) {
@@ -237,7 +245,20 @@ function patientPayload(form: FormData) {
 
 export default function DashboardClient() {
   const { data: session } = authClient.useSession();
+  const staffRole = session?.user.staffRole ?? session?.user.role ?? "staff";
+  const staffDepartmentCode = session?.user.departmentCode ?? null;
+  const visibleDepartmentModules = departmentModules.filter((module) =>
+    canAccessDepartmentModule(module.id, staffRole, staffDepartmentCode),
+  );
+  const defaultDepartmentModule = visibleDepartmentModules[0]?.id;
+  const visibleNavigation =
+    staffRole === "department_head" ? [] : navigation;
+  const canInviteStaff =
+    session?.user.role === "admin" || staffRole === "facility_admin";
   const [section, setSection] = useState<Section>("overview");
+  const activeDepartmentModule = departmentModules.find(
+    (module) => module.id === section,
+  )?.id ?? (staffRole === "department_head" ? defaultDepartmentModule : undefined);
   const [modal, setModal] = useState<Modal>(null);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -273,6 +294,24 @@ export default function DashboardClient() {
   );
 
   const refresh = useCallback(async () => {
+    if (!session) {
+      setLoading(false);
+      return;
+    }
+    if (staffRole === "department_head") {
+      setDashboard(null);
+      setDepartments([]);
+      setPatients([]);
+      setAppointments([]);
+      setQueue([]);
+      setReminders([]);
+      setNotifications([]);
+      setUnreadCount(0);
+      setConnected(true);
+      setError("");
+      setLoading(false);
+      return;
+    }
     try {
       const [
         dashboardData,
@@ -311,17 +350,25 @@ export default function DashboardClient() {
     } finally {
       setLoading(false);
     }
-  }, [showArchivedPatients]);
+  }, [showArchivedPatients, session?.user.id, staffRole]);
 
   useEffect(() => {
     void refresh();
+    if (staffRole === "department_head") return;
     const timer = window.setInterval(() => void refresh(), 15000);
     return () => window.clearInterval(timer);
-  }, [refresh]);
+  }, [refresh, staffRole]);
+
+  useEffect(() => {
+    if (staffRole === "department_head" && defaultDepartmentModule) {
+      setSection(defaultDepartmentModule);
+    }
+  }, [staffRole, defaultDepartmentModule]);
 
   useEffect(() => {
     let lastGPressedAt = 0;
     function handleShortcut(event: KeyboardEvent) {
+      if (staffRole === "department_head") return;
       const target = event.target;
       const isTyping =
         target instanceof HTMLElement &&
@@ -346,9 +393,10 @@ export default function DashboardClient() {
     }
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [section]);
+  }, [section, staffRole]);
 
   useEffect(() => {
+    if (staffRole === "department_head") return;
     const timer = window.setTimeout(async () => {
       try {
         const results = await api.get<Patient[]>(
@@ -360,7 +408,7 @@ export default function DashboardClient() {
       }
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [search, showArchivedPatients]);
+  }, [search, showArchivedPatients, staffRole]);
 
   const filteredPatients = useMemo(() => {
     if (!search.trim()) return patients;
@@ -703,7 +751,7 @@ export default function DashboardClient() {
 
         <div className="nav-label">WORKSPACE</div>
         <nav className="main-nav" aria-label="Main navigation">
-          {navigation.map((item) => (
+          {visibleNavigation.map((item) => (
             <button
               className={`nav-item ${section === item.id ? "active" : ""}`}
               key={item.id}
@@ -720,42 +768,45 @@ export default function DashboardClient() {
         </nav>
 
         <section className="planned-modules" aria-labelledby="planned-modules-title">
-          <div className="nav-label" id="planned-modules-title">COMING SOON</div>
+          <div className="nav-label" id="planned-modules-title">DEPARTMENTS</div>
           <div className="planned-module-list">
-            {plannedModules.map((module) => (
-              <div
-                className="nav-item nav-item-disabled"
-                key={module.label}
-                aria-disabled="true"
-                title={`${module.label} module coming soon`}
+            {visibleDepartmentModules.map((module) => (
+              <button
+                className={`nav-item ${section === module.id ? "active" : ""}`}
+                key={module.id}
+                aria-current={section === module.id ? "page" : undefined}
+                onClick={() => setSection(module.id)}
               >
                 <span className="nav-icon"><AppIcon name={module.icon} size={19} /></span>
                 <span>{module.label}</span>
-                <span className="coming-soon-badge">Soon</span>
-              </div>
+              </button>
             ))}
           </div>
         </section>
 
         <div className="sidebar-spacer" />
-        <button
-          className={`nav-item staff-invite-link ${section === "reminders" ? "active" : ""}`}
-          onClick={() => setSection("reminders")}
-        >
-          <span className="nav-icon"><AppIcon name="clock" size={19} /></span>
-          <span>My reminders</span>
-          {reminders.filter((reminder) => reminder.status === "scheduled").length > 0 && (
-            <span className="nav-count">{reminders.filter((reminder) => reminder.status === "scheduled").length}</span>
-          )}
-        </button>
+        {staffRole !== "department_head" && (
+          <button
+            className={`nav-item staff-invite-link ${section === "reminders" ? "active" : ""}`}
+            onClick={() => setSection("reminders")}
+          >
+            <span className="nav-icon"><AppIcon name="clock" size={19} /></span>
+            <span>My reminders</span>
+            {reminders.filter((reminder) => reminder.status === "scheduled").length > 0 && (
+              <span className="nav-count">{reminders.filter((reminder) => reminder.status === "scheduled").length}</span>
+            )}
+          </button>
+        )}
         <a className="nav-item staff-invite-link" href="/security/two-factor">
           <span className="nav-icon"><AppIcon name="security" size={19} /></span>
           <span>My security</span>
         </a>
-        <a className="nav-item staff-invite-link" href="/staff-invitations">
-          <span className="nav-icon"><AppIcon name="staff" size={19} /></span>
-          <span>Invite staff</span>
-        </a>
+        {canInviteStaff && (
+          <a className="nav-item staff-invite-link" href="/staff-invitations">
+            <span className="nav-icon"><AppIcon name="staff" size={19} /></span>
+            <span>Invite staff</span>
+          </a>
+        )}
         <div className="sidebar-help">
           <div className="help-mark" aria-hidden="true">?</div>
           <div>
@@ -803,27 +854,31 @@ export default function DashboardClient() {
             <strong>{sectionLabels[section]}</strong>
           </div>
           <div className="topbar-actions">
-              <label className="global-search">
-                <AppIcon name="search" size={17} />
-                <input
-                  ref={globalSearchRef}
-                  aria-label="Search patients"
-                  placeholder="Search patients…"
-                  value={search}
-                  onChange={(event) => {
-                    setSearch(event.target.value);
-                    setSection("patients");
-                  }}
-                />
-                <kbd>/</kbd>
-              </label>
+              {staffRole !== "department_head" && (
+                <label className="global-search">
+                  <AppIcon name="search" size={17} />
+                  <input
+                    ref={globalSearchRef}
+                    aria-label="Search patients"
+                    placeholder="Search patients…"
+                    value={search}
+                    onChange={(event) => {
+                      setSearch(event.target.value);
+                      setSection("patients");
+                    }}
+                  />
+                  <kbd>/</kbd>
+                </label>
+              )}
               <div className={`connection ${connected ? "online" : "offline"}`}>
                 <span className="connection-dot" /> {connected ? "Connected" : "Offline"}
               </div>
-              <button className="button button-quiet topbar-reminder-button" onClick={() => setModal("reminder")}>
-                <AppIcon name="add" size={17} /> <span>Reminder</span>
-              </button>
-              <div className="notification-menu-wrap">
+              {staffRole !== "department_head" && (
+                <button className="button button-quiet topbar-reminder-button" onClick={() => setModal("reminder")}>
+                  <AppIcon name="add" size={17} /> <span>Reminder</span>
+                </button>
+              )}
+              {staffRole !== "department_head" && <div className="notification-menu-wrap">
                 <button
                   className="icon-button notification-button"
                   aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`}
@@ -845,7 +900,7 @@ export default function DashboardClient() {
                     }}
                   />
                 )}
-              </div>
+              </div>}
               <button
                 className="topbar-avatar topbar-avatar-button"
                 aria-label="View and edit your profile"
@@ -873,7 +928,7 @@ export default function DashboardClient() {
             </div>
           )}
 
-          {section === "overview" && (
+          {staffRole !== "department_head" && section === "overview" && (
             <Overview
               todayLabel={todayLabel}
               greeting={`${greeting}, ${firstName}`}
@@ -892,7 +947,7 @@ export default function DashboardClient() {
             />
           )}
 
-          {section === "patients" && (
+          {staffRole !== "department_head" && section === "patients" && (
             <PatientsView
               patients={filteredPatients}
               search={search}
@@ -911,7 +966,7 @@ export default function DashboardClient() {
             />
           )}
 
-          {section === "appointments" && (
+          {staffRole !== "department_head" && section === "appointments" && (
             <AppointmentsView
               appointments={appointments}
               onBook={() => setModal("appointment")}
@@ -919,7 +974,7 @@ export default function DashboardClient() {
             />
           )}
 
-          {section === "queue" && (
+          {staffRole !== "department_head" && section === "queue" && (
             <QueueView
               items={visibleQueue}
               departments={departments}
@@ -932,7 +987,7 @@ export default function DashboardClient() {
               }}
             />
           )}
-          {section === "reminders" && (
+          {staffRole !== "department_head" && section === "reminders" && (
             <RemindersView
               reminders={reminders}
               timezone={facilityTimezone}
@@ -940,13 +995,27 @@ export default function DashboardClient() {
               onAction={updateReminder}
             />
           )}
-          {section === "notifications" && (
+          {staffRole !== "department_head" && section === "notifications" && (
             <NotificationsView
               items={notifications}
               unreadCount={unreadCount}
               onOpen={openNotification}
               onMarkAllRead={markAllNotificationsRead}
             />
+          )}
+          {activeDepartmentModule && (
+            <DepartmentWorkspace
+              key={activeDepartmentModule}
+              module={activeDepartmentModule}
+              role={staffRole}
+              departmentCode={staffDepartmentCode}
+            />
+          )}
+          {staffRole === "department_head" && !activeDepartmentModule && (
+            <div className="empty-state department-unavailable">
+              <strong>No department workspace is available</strong>
+              <p>Ask an administrator to assign you to Pharmacy, Laboratory, Billing &amp; insurance, or Theatre.</p>
+            </div>
           )}
         </div>
       </main>

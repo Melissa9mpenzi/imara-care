@@ -4,7 +4,11 @@ import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import nodemailer from "nodemailer";
 import { admin, emailOTP, jwt, twoFactor } from "better-auth/plugins";
-import { authDatabase, queryAuthDatabase } from "@/lib/auth-database";
+import {
+  authDatabase,
+  ensureAuthSupportTables,
+  queryAuthDatabase,
+} from "@/lib/auth-database";
 
 export const invitationTokenHash = (token: string) =>
   createHash("sha256").update(token).digest("hex");
@@ -15,10 +19,12 @@ export async function findActiveInvitation(token: string) {
     email: string;
     fullName: string;
     staffRole: string;
+    departmentCode: string | null;
     facilityId: string;
     expiresAt: string;
   }>(
     `SELECT id, email, full_name AS "fullName", staff_role AS "staffRole",
+              department_code AS "departmentCode",
               facility_id AS "facilityId", expires_at AS "expiresAt"
        FROM staff_invitations
        WHERE token_hash = ? AND used_at IS NULL AND revoked_at IS NULL
@@ -66,6 +72,7 @@ const mfaRequiredRoles = new Set([
   "medical_director",
   "clinician",
   "pharmacist",
+  "department_head",
 ]);
 
 export function requiresMfa(role: unknown) {
@@ -323,6 +330,7 @@ export const auth = betterAuth({
     additionalFields: {
       facilityId: { type: "string", required: false, input: false },
       staffRole: { type: "string", required: false, input: false },
+      departmentCode: { type: "string", required: false, input: false },
     },
   },
   databaseHooks: {
@@ -339,6 +347,9 @@ export const auth = betterAuth({
               emailVerified: true,
               facilityId: invitation.facilityId,
               staffRole: invitation.staffRole,
+              ...(invitation.departmentCode
+                ? { departmentCode: invitation.departmentCode }
+                : {}),
             },
           };
         },
@@ -393,6 +404,7 @@ export const auth = betterAuth({
           sub: user.id,
           facilityId: user.facilityId ?? facilityId,
           staffRole: user.staffRole ?? user.role ?? "staff",
+          departmentCode: user.departmentCode ?? null,
           mfa: user.twoFactorEnabled === true,
         }),
       },
@@ -610,5 +622,10 @@ export const auth = betterAuth({
     }),
   },
 });
+
+export async function getAuthSession(requestHeaders: Headers) {
+  await ensureAuthSupportTables();
+  return auth.api.getSession({ headers: requestHeaders });
+}
 
 export { authDatabase };

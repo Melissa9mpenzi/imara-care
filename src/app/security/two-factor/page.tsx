@@ -1,10 +1,10 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { auth, requiresMfa } from "@/lib/auth";
+import { getAuthSession, requiresMfa } from "@/lib/auth";
 import TwoFactorSetup from "./two-factor-setup";
 
 export default async function TwoFactorSettingsPage() {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getAuthSession(await headers());
   if (!session) redirect("/login");
 
   const role = session.user.staffRole ?? session.user.role;

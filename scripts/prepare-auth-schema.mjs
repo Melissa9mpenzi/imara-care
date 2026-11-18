@@ -71,3 +71,12 @@ if (missingTables.length > 0) {
     await verificationPool.end();
   }
 }
+
+const schemaPool = new Pool({ connectionString });
+try {
+  await schemaPool.query(
+    'ALTER TABLE auth."user" ADD COLUMN IF NOT EXISTS "departmentCode" TEXT',
+  );
+} finally {
+  await schemaPool.end();
+}

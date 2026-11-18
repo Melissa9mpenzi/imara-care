@@ -7,6 +7,7 @@ type Invitation = {
   email: string;
   fullName: string;
   staffRole: string;
+  departmentName: string;
   facilityName: string;
   expiresAt: string;
 };
@@ -102,7 +103,8 @@ export default function InviteAcceptance({ token }: { token: string }) {
         <div className="eyebrow">STAFF INVITATION</div>
         <h1>Join {invitation.facilityName}</h1>
         <p>
-          You were invited as <strong>{invitation.staffRole.replaceAll("_", " ")}</strong>.
+          You were invited as <strong>{invitation.staffRole.replaceAll("_", " ")}</strong> in{" "}
+          <strong>{invitation.departmentName}</strong>.
           Confirm the invitation by creating a password for {invitation.email}.
         </p>
         <form className="auth-form" onSubmit={submit}>

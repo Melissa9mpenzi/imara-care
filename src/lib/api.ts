@@ -142,6 +142,78 @@ export interface NotificationList {
   unread_count: number;
 }
 
+export interface MedicationStockItem {
+  id: string;
+  name: string;
+  strength: string;
+  form: string;
+  unit: string;
+  quantity_on_hand: number;
+  reorder_level: number;
+  unit_price: string;
+  low_stock: boolean;
+  active: boolean;
+  updated_at: string;
+}
+
+export interface DepartmentPatient {
+  id: string;
+  patient_number: string;
+  first_name: string;
+  last_name: string;
+  other_names: string | null;
+  phone: string | null;
+}
+
+export interface MedicationOrder {
+  id: string;
+  patient: DepartmentPatient;
+  medication: string;
+  stock_item_id: string;
+  dosage: string;
+  frequency: string;
+  duration: string | null;
+  quantity: number;
+  instructions: string | null;
+  status: string;
+  created_at: string;
+}
+
+export interface LaboratoryOrder {
+  id: string;
+  patient: DepartmentPatient;
+  test_name: string;
+  specimen: string;
+  priority: string;
+  clinical_notes: string | null;
+  status: string;
+  result: string | null;
+  created_at: string;
+}
+
+export interface BillingInvoice {
+  id: string;
+  invoice_number: string;
+  patient: DepartmentPatient;
+  description: string;
+  total_amount: string;
+  paid_amount: string;
+  balance: string;
+  status: string;
+  created_at: string;
+}
+
+export interface TheatreProcedure {
+  id: string;
+  patient: DepartmentPatient;
+  procedure_name: string;
+  scheduled_at: string;
+  lead_clinician: string;
+  status: string;
+  notes: string | null;
+  created_at: string;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const { data: authData, error: authError } = await authClient.token();
   if (authError || !authData?.token) {

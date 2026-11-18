@@ -27,6 +27,7 @@ export function ensureAuthSupportTables() {
         email TEXT NOT NULL,
         full_name TEXT NOT NULL,
         staff_role TEXT NOT NULL,
+        department_code TEXT,
         facility_id TEXT NOT NULL,
         created_by TEXT NOT NULL,
         created_at TEXT NOT NULL,
@@ -36,6 +37,10 @@ export function ensureAuthSupportTables() {
       );
       CREATE INDEX IF NOT EXISTS ix_staff_invitations_email
         ON staff_invitations (facility_id, email, expires_at);
+      ALTER TABLE staff_invitations
+        ADD COLUMN IF NOT EXISTS department_code TEXT;
+      ALTER TABLE "user"
+        ADD COLUMN IF NOT EXISTS "departmentCode" TEXT;
       CREATE TABLE IF NOT EXISTS auth_audit_events (
         id TEXT PRIMARY KEY,
         actor_user_id TEXT,

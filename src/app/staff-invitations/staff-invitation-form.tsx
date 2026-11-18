@@ -1,29 +1,64 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type CreatedInvitation = {
   id: string;
   email: string;
+  departmentName: string;
   expiresAt: string;
   invitationUrl?: string;
+};
+
+type DepartmentOption = {
+  code: string;
+  name: string;
 };
 
 const staffRoles = [
   ["facility_admin", "Facility administrator"],
   ["medical_director", "Medical director"],
+  ["department_head", "Department head"],
   ["clinician", "Doctor / clinician"],
   ["pharmacist", "Pharmacist"],
   ["reception", "Reception"],
   ["laboratory", "Laboratory"],
   ["pharmacy", "Pharmacy staff"],
   ["cashier", "Cashier"],
+  ["billing", "Billing staff"],
+  ["theatre", "Theatre staff"],
+  ["nurse", "Nurse"],
+  ["records", "Medical records"],
 ];
 
+const roleDepartments: Record<string, string> = {
+  pharmacist: "PHARM",
+  pharmacy: "PHARM",
+  laboratory: "LAB",
+  cashier: "BILL",
+  billing: "BILL",
+  theatre: "THR",
+};
+
 export default function StaffInvitationForm() {
+  const [departments, setDepartments] = useState<DepartmentOption[]>([]);
   const [created, setCreated] = useState<CreatedInvitation | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [staffRole, setStaffRole] = useState("reception");
+  const [departmentCode, setDepartmentCode] = useState("OPD");
+
+  useEffect(() => {
+    void fetch("/api/staff/invitations", { cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.detail ?? "Departments could not be loaded.");
+        setDepartments(body.departments as DepartmentOption[]);
+      })
+      .catch((reason) => {
+        setError(reason instanceof Error ? reason.message : "Departments could not be loaded.");
+      });
+  }, []);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -40,12 +75,15 @@ export default function StaffInvitationForm() {
           email: form.get("email"),
           fullName: form.get("fullName"),
           staffRole: form.get("staffRole"),
+          departmentCode: form.get("departmentCode"),
         }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.detail ?? "The invitation could not be created.");
       setCreated(body as CreatedInvitation);
       formElement.reset();
+      setStaffRole("reception");
+      setDepartmentCode("OPD");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The invitation could not be created.");
     } finally {
@@ -81,8 +119,30 @@ export default function StaffInvitationForm() {
           <label htmlFor="email">Work email</label>
           <input id="email" name="email" type="email" autoComplete="email" maxLength={254} required />
           <label htmlFor="staffRole">Role</label>
-          <select id="staffRole" name="staffRole" defaultValue="reception">
+          <select
+            id="staffRole"
+            name="staffRole"
+            value={staffRole}
+            onChange={(event) => {
+              const nextRole = event.target.value;
+              setStaffRole(nextRole);
+              if (roleDepartments[nextRole]) setDepartmentCode(roleDepartments[nextRole]);
+            }}
+          >
             {staffRoles.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+          <label htmlFor="departmentCode">Primary department</label>
+          <select
+            id="departmentCode"
+            name="departmentCode"
+            value={departmentCode}
+            onChange={(event) => setDepartmentCode(event.target.value)}
+            required
+            disabled={!departments.length}
+          >
+            {departments.map((department) => (
+              <option key={department.code} value={department.code}>{department.name}</option>
+            ))}
           </select>
           {error && <p className="auth-error" role="alert">{error}</p>}
           <button className="primary-button" type="submit" disabled={busy}>
@@ -92,6 +152,7 @@ export default function StaffInvitationForm() {
         {created && (
           <div className="invitation-result" role="status">
             <strong>Invitation created for {created.email}</strong>
+            <span>Department: {created.departmentName}.</span>
             <span>Expires {new Date(created.expiresAt).toLocaleString()}.</span>
             {created.invitationUrl ? (
               <>
