@@ -802,6 +802,12 @@ export default function DashboardClient() {
           <span>My security</span>
         </a>
         {canInviteStaff && (
+          <a className="nav-item staff-invite-link" href="/staff">
+            <span className="nav-icon"><AppIcon name="staff" size={19} /></span>
+            <span>Staff directory</span>
+          </a>
+        )}
+        {canInviteStaff && (
           <a className="nav-item staff-invite-link" href="/staff-invitations">
             <span className="nav-icon"><AppIcon name="staff" size={19} /></span>
             <span>Invite staff</span>
