@@ -9,6 +9,9 @@ import DepartmentWorkspace, {
   canAccessDepartmentModule,
   type DepartmentModule,
 } from "@/components/department-workspaces";
+import StaffDirectory from "@/app/staff/staff-directory";
+import StaffProfile from "@/app/staff/staff-profile";
+import type { FacilityStaffMember } from "@/lib/staff-directory";
 import type {
   AppNotification,
   Appointment,
@@ -21,7 +24,7 @@ import type {
   Reminder,
 } from "@/lib/api";
 
-type Section = "overview" | "patients" | "appointments" | "queue" | "reminders" | "notifications" | DepartmentModule;
+type Section = "overview" | "patients" | "appointments" | "queue" | "reminders" | "notifications" | "staff" | DepartmentModule;
 type Modal = "patient" | "patient-edit" | "patient-detail" | "profile" | "appointment" | "checkin" | "triage" | "reminder" | null;
 
 type IconName =
@@ -41,11 +44,12 @@ type IconName =
   | "clock"
   | "logout";
 
-const navigation: { id: Section; label: string; icon: IconName }[] = [
+const navigation: { id: Section; label: string; icon: IconName; managerOnly?: boolean }[] = [
   { id: "overview", label: "Overview", icon: "overview" },
   { id: "patients", label: "Patients", icon: "patients" },
   { id: "appointments", label: "Appointments", icon: "appointments" },
   { id: "queue", label: "Queue & triage", icon: "queue" },
+  { id: "staff", label: "Staff directory", icon: "staff", managerOnly: true },
 ];
 
 const sectionLabels: Record<Section, string> = {
@@ -55,6 +59,7 @@ const sectionLabels: Record<Section, string> = {
   queue: "Queue & triage",
   reminders: "My reminders",
   notifications: "Notifications",
+  staff: "Staff directory",
   pharmacy: "Pharmacy",
   laboratory: "Laboratory",
   billing: "Billing & insurance",
@@ -243,7 +248,15 @@ function patientPayload(form: FormData) {
   };
 }
 
-export default function DashboardClient() {
+export default function DashboardClient({
+  initialSection = "overview",
+  initialStaff = [],
+  initialStaffId = null,
+}: {
+  initialSection?: Section;
+  initialStaff?: FacilityStaffMember[];
+  initialStaffId?: string | null;
+}) {
   const { data: session } = authClient.useSession();
   const staffRole = session?.user.staffRole ?? session?.user.role ?? "staff";
   const staffDepartmentCode = session?.user.departmentCode ?? null;
@@ -251,11 +264,14 @@ export default function DashboardClient() {
     canAccessDepartmentModule(module.id, staffRole, staffDepartmentCode),
   );
   const defaultDepartmentModule = visibleDepartmentModules[0]?.id;
-  const visibleNavigation =
-    staffRole === "department_head" ? [] : navigation;
   const canInviteStaff =
     session?.user.role === "admin" || staffRole === "facility_admin";
-  const [section, setSection] = useState<Section>("overview");
+  const visibleNavigation =
+    staffRole === "department_head"
+      ? []
+      : navigation.filter((item) => !item.managerOnly || canInviteStaff);
+  const [section, setSection] = useState<Section>(initialSection);
+  const [selectedStaffId, setSelectedStaffId] = useState<string | null>(initialStaffId);
   const activeDepartmentModule = departmentModules.find(
     (module) => module.id === section,
   )?.id ?? (staffRole === "department_head" ? defaultDepartmentModule : undefined);
@@ -756,7 +772,10 @@ export default function DashboardClient() {
               className={`nav-item ${section === item.id ? "active" : ""}`}
               key={item.id}
               aria-current={section === item.id ? "page" : undefined}
-              onClick={() => setSection(item.id)}
+              onClick={() => {
+                setSection(item.id);
+                setSelectedStaffId(null);
+              }}
             >
               <span className="nav-icon"><AppIcon name={item.icon} size={19} /></span>
               <span>{item.label}</span>
@@ -801,12 +820,6 @@ export default function DashboardClient() {
           <span className="nav-icon"><AppIcon name="security" size={19} /></span>
           <span>My security</span>
         </a>
-        {canInviteStaff && (
-          <a className="nav-item staff-invite-link" href="/staff">
-            <span className="nav-icon"><AppIcon name="staff" size={19} /></span>
-            <span>Staff directory</span>
-          </a>
-        )}
         {canInviteStaff && (
           <a className="nav-item staff-invite-link" href="/staff-invitations">
             <span className="nav-icon"><AppIcon name="staff" size={19} /></span>
@@ -1008,6 +1021,16 @@ export default function DashboardClient() {
               onOpen={openNotification}
               onMarkAllRead={markAllNotificationsRead}
             />
+          )}
+          {canInviteStaff && section === "staff" && (
+            selectedStaffId ? (
+              <StaffProfile
+                member={initialStaff.find((member) => member.id === selectedStaffId) ?? null}
+                onBack={() => setSelectedStaffId(null)}
+              />
+            ) : (
+              <StaffDirectory staff={initialStaff} onSelect={setSelectedStaffId} />
+            )
           )}
           {activeDepartmentModule && (
             <DepartmentWorkspace

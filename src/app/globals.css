@@ -663,19 +663,13 @@ h2 { color: #233832; font-size: 14px; margin: 0; }
 .invitation-result { background: var(--primary-wash); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; gap: 8px; margin-top: 20px; padding: 16px; }
 .invitation-result span { color: var(--text-muted); font-size: 13px; }
 .staff-invite-link { margin: 0 2px 22px; text-decoration: none; }
-.staff-directory-page, .staff-profile-page {
-  background:
-    radial-gradient(circle at 10% 5%, var(--primary-wash), transparent 34rem),
-    var(--surface);
-  min-height: 100vh;
-  padding: 32px clamp(18px, 5vw, 72px) 56px;
-}
+.staff-directory-view, .staff-profile-view { width: 100%; }
 .staff-page-heading {
   align-items: flex-end;
   display: flex;
   gap: 20px;
   justify-content: space-between;
-  margin: 8px 0 28px;
+  margin: 0 0 28px;
 }
 .staff-page-heading p { color: var(--text-muted); margin: 8px 0 0; }
 .staff-directory-card, .staff-profile-card {
@@ -723,12 +717,18 @@ h2 { color: #233832; font-size: 14px; margin: 0; }
   text-transform: uppercase;
 }
 .staff-table-row {
+  background: transparent;
+  border: 0;
   border-top: 1px solid #edf1ef;
   color: var(--text);
+  cursor: pointer;
+  font: inherit;
   min-height: 76px;
-  text-decoration: none;
+  text-align: left;
+  width: 100%;
 }
 .staff-table-row:hover { background: #f8fbf9; }
+.staff-table-row:focus-visible { box-shadow: var(--focus-ring); outline: none; }
 .staff-identity { align-items: center; display: flex; gap: 12px; min-width: 0; }
 .staff-avatar, .staff-profile-avatar {
   align-items: center;

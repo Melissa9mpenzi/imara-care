@@ -16,8 +16,10 @@ function accountStatus(member: FacilityStaffMember) {
 
 export default function StaffDirectory({
   staff,
+  onSelect,
 }: {
   staff: FacilityStaffMember[];
+  onSelect: (staffId: string) => void;
 }) {
   const [search, setSearch] = useState("");
   const filteredStaff = useMemo(() => {
@@ -37,8 +39,7 @@ export default function StaffDirectory({
   }, [search, staff]);
 
   return (
-    <main className="staff-directory-page">
-      <a className="back-link" href="/">← Back to workspace</a>
+    <section className="staff-directory-view">
       <header className="staff-page-heading">
         <div>
           <div className="eyebrow">STAFF MANAGEMENT</div>
@@ -78,9 +79,10 @@ export default function StaffDirectory({
                 <span aria-hidden="true" />
               </div>
               {filteredStaff.map((member) => (
-                <a
+                <button
+                  type="button"
                   className="staff-table-row"
-                  href={`/staff/${encodeURIComponent(member.id)}`}
+                  onClick={() => onSelect(member.id)}
                   key={member.id}
                   role="row"
                 >
@@ -109,7 +111,7 @@ export default function StaffDirectory({
                   </span>
                   <span role="cell">{member.twoFactorEnabled ? "Enabled" : "Not enabled"}</span>
                   <span className="staff-row-arrow" aria-hidden="true">→</span>
-                </a>
+                </button>
               ))}
             </div>
           </div>
@@ -124,6 +126,6 @@ export default function StaffDirectory({
           </div>
         )}
       </section>
-    </main>
+    </section>
   );
 }

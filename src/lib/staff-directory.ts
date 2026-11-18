@@ -18,16 +18,18 @@ export type FacilityStaffMember = {
   createdAt: string;
 };
 
+export function canManageStaff(user: {
+  role?: string | null;
+  staffRole?: string | null;
+}) {
+  return user.role === "admin" || user.staffRole === "facility_admin";
+}
+
 export async function requireStaffManager() {
   const session = await getAuthSession(await headers());
   if (!session) redirect("/login");
 
-  if (
-    session.user.role !== "admin" &&
-    session.user.staffRole !== "facility_admin"
-  ) {
-    redirect("/");
-  }
+  if (!canManageStaff(session.user)) redirect("/");
 
   if (
     requiresMfa(session.user.staffRole ?? session.user.role) &&
@@ -61,31 +63,4 @@ export async function getFacilityStaff(facilityId: string) {
     [facilityId],
   );
   return result.rows;
-}
-
-export async function getFacilityStaffMember(
-  facilityId: string,
-  userId: string,
-) {
-  const result = await queryAuthDatabase<FacilityStaffMember>(
-    `SELECT u.id, u.name, u.email, u.image, u.role,
-            u."staffRole" AS "staffRole",
-            u."departmentCode" AS "departmentCode",
-            CASE
-              WHEN u."departmentCode" = 'BILL' THEN 'Billing & insurance'
-              ELSE d.name
-            END AS "departmentName",
-            u."emailVerified" AS "emailVerified",
-            u."twoFactorEnabled" AS "twoFactorEnabled",
-            u.banned,
-            u."createdAt"::text AS "createdAt"
-       FROM "user" AS u
-       LEFT JOIN public.departments AS d
-         ON d.code = u."departmentCode"
-        AND d.facility_id = u."facilityId"
-      WHERE u."facilityId" = ? AND u.id = ?
-      LIMIT 1`,
-    [facilityId, userId],
-  );
-  return result.rows[0] ?? null;
 }
