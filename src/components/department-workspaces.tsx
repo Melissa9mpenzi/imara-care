@@ -5,6 +5,7 @@ import type { FormEvent } from "react";
 import { api } from "@/lib/api";
 import type {
   BillingInvoice,
+  DepartmentQueueEntry,
   DepartmentPatient,
   LaboratoryOrder,
   MedicationOrder,
@@ -30,6 +31,14 @@ const moduleTitles: Record<DepartmentModule, string> = {
 
 function patientName(patient: Pick<DepartmentPatient, "first_name" | "last_name" | "other_names">) {
   return [patient.first_name, patient.other_names, patient.last_name].filter(Boolean).join(" ");
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat("en-UG", {
+    style: "currency",
+    currency: "UGX",
+    maximumFractionDigits: 0,
+  }).format(value);
 }
 
 function moduleManager(role: string, assignedDepartment: string | null, module: DepartmentModule) {
@@ -204,6 +213,8 @@ export default function DepartmentWorkspace({
   const [laboratoryOrders, setLaboratoryOrders] = useState<LaboratoryOrder[]>([]);
   const [invoices, setInvoices] = useState<BillingInvoice[]>([]);
   const [procedures, setProcedures] = useState<TheatreProcedure[]>([]);
+  const [departmentPatients, setDepartmentPatients] = useState<DepartmentPatient[]>([]);
+  const [departmentQueue, setDepartmentQueue] = useState<DepartmentQueueEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [patientPickerVersion, setPatientPickerVersion] = useState(0);
@@ -225,12 +236,25 @@ export default function DepartmentWorkspace({
       } else {
         setProcedures(await api.get<TheatreProcedure[]>("/theatre/procedures"));
       }
+      if (role === "department_head") {
+        const code = moduleDepartment[module];
+        const [patients, queue] = await Promise.all([
+          api.get<DepartmentPatient[]>(
+            `/departments/patients?department_code=${code}&limit=50`,
+          ),
+          api.get<DepartmentQueueEntry[]>(
+            `/departments/queues?department_code=${code}&status=all`,
+          ),
+        ]);
+        setDepartmentPatients(patients);
+        setDepartmentQueue(queue);
+      }
     } catch (reason) {
       setLoadError(reason instanceof Error ? reason.message : "Department data could not be loaded.");
     } finally {
       setLoading(false);
     }
-  }, [module]);
+  }, [module, role]);
 
   useEffect(() => {
     void refresh();
@@ -238,6 +262,10 @@ export default function DepartmentWorkspace({
 
   const action = useAction(refresh);
   const manager = moduleManager(role, departmentCode, module);
+  const canIssueInvoice =
+    module === "billing" &&
+    manager &&
+    ["admin", "facility_admin", "medical_director", "department_head", "billing"].includes(role);
   const canCreateClinicalOrder = manager || role === "clinician";
   const [selectedPatient, setSelectedPatient] = useState<DepartmentPatient | null>(null);
 
@@ -268,9 +296,21 @@ export default function DepartmentWorkspace({
     <section className="department-workspace">
       <div className="department-workspace-heading">
         <div>
-          <span className="eyebrow">DEPARTMENT WORKSPACE</span>
+          <span className="eyebrow">
+            {["admin", "facility_admin", "medical_director"].includes(role)
+              ? "FACILITY DEPARTMENT OVERVIEW"
+              : role === "department_head"
+                ? "YOUR DEPARTMENT"
+                : "DEPARTMENT WORKSPACE"}
+          </span>
           <h1>{moduleTitles[module]}</h1>
-          <p>Manage {moduleTitles[module].toLowerCase()} activity for this facility.</p>
+          <p>
+            {role === "department_head"
+              ? "Department activity and patient flow for your assigned department."
+              : ["admin", "facility_admin", "medical_director"].includes(role)
+                ? "Review department operations, activity, and outstanding work."
+                : `Manage ${moduleTitles[module].toLowerCase()} activity for your assigned department.`}
+          </p>
         </div>
         {loading && <span className="department-hint">Loading…</span>}
       </div>
@@ -278,6 +318,55 @@ export default function DepartmentWorkspace({
         <div className="alert alert-error" role="alert">{loadError || action.error}</div>
       )}
       {action.success && <div className="alert alert-success" role="status">{action.success}</div>}
+
+      {role === "department_head" && (
+        <div className="department-head-overview">
+          <section className="panel department-panel">
+            <div className="panel-heading">
+              <div><h3>Patients linked to this department</h3><span>{departmentPatients.length} shown</span></div>
+            </div>
+            <div className="department-table-wrap">
+              <table className="department-table">
+                <thead><tr><th>Patient</th><th>Patient number</th></tr></thead>
+                <tbody>
+                  {departmentPatients.map((patient) => (
+                    <tr key={patient.id}>
+                      <td><strong>{patientName(patient)}</strong></td>
+                      <td>{patient.patient_number}</td>
+                    </tr>
+                  ))}
+                  {!departmentPatients.length && (
+                    <tr><td colSpan={2} className="department-empty">No active patients are linked to this department yet.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <section className="panel department-panel">
+            <div className="panel-heading">
+              <div><h3>Department queue</h3><span>{departmentQueue.length} entries</span></div>
+            </div>
+            <div className="department-table-wrap">
+              <table className="department-table">
+                <thead><tr><th>Queue</th><th>Patient</th><th>Reason</th><th>Priority / status</th></tr></thead>
+                <tbody>
+                  {departmentQueue.map((entry) => (
+                    <tr key={entry.id}>
+                      <td><strong>{entry.queue_number}</strong></td>
+                      <td><PatientLabel patient={entry.patient} /></td>
+                      <td>{entry.reason}</td>
+                      <td><span className={`department-status ${entry.priority === "emergency" ? "status-warning" : "status-pending"}`}>{entry.priority}</span><small>{entry.status.replaceAll("_", " ")}</small></td>
+                    </tr>
+                  ))}
+                  {!departmentQueue.length && (
+                    <tr><td colSpan={4} className="department-empty">No queue entries for this department.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      )}
 
       {module === "pharmacy" && (
         <>
@@ -474,7 +563,35 @@ export default function DepartmentWorkspace({
 
       {module === "billing" && (
         <>
-          {manager && (
+          <section className="billing-overview">
+            <div className="billing-metric">
+              <span>Invoices</span>
+              <strong>{invoices.length}</strong>
+            </div>
+            <div className="billing-metric">
+              <span>Collected</span>
+              <strong>{formatCurrency(invoices.reduce((sum, invoice) => sum + Number(invoice.paid_amount), 0))}</strong>
+            </div>
+            <div className="billing-metric">
+              <span>Outstanding balance</span>
+              <strong>{formatCurrency(invoices.reduce((sum, invoice) => sum + Number(invoice.balance), 0))}</strong>
+            </div>
+          </section>
+          <section className="billing-guide" aria-label="Billing workflow">
+            <strong>How billing works</strong>
+            <ol>
+              <li>Billing staff create an invoice for a registered patient and enter each charge in its description.</li>
+              <li>Billing staff or cashiers record cash, insurance, mobile money, or bank-transfer payments against that invoice.</li>
+              <li>Partial payments reduce the balance. The invoice is marked paid when the recorded total reaches the invoice total.</li>
+            </ol>
+            <p>
+              Record the payment reference where available and reconcile cash or
+              electronic payments against the facility&apos;s own finance records.
+              This MVP does not process insurer claims, tax, refunds, or accounting
+              exports.
+            </p>
+          </section>
+          {canIssueInvoice && (
             <section className="panel department-panel">
               <div className="panel-heading"><h3>Create invoice</h3></div>
               <form className="department-form" onSubmit={(event) => void submit(
@@ -497,7 +614,7 @@ export default function DepartmentWorkspace({
             <div className="panel-heading"><h3>Invoices & payments</h3><span>{invoices.length} recent</span></div>
             <div className="department-table-wrap">
               <table className="department-table">
-                <thead><tr><th>Invoice / patient</th><th>Description</th><th>Total</th><th>Paid / balance</th><th>Status</th>{manager && <th>Record payment</th>}</tr></thead>
+                <thead><tr><th>Invoice / patient</th><th>Description</th><th>Total</th><th>Paid / balance</th><th>Status</th>{manager && <th>Record payment</th>}<th>Payment history</th></tr></thead>
                 <tbody>
                   {invoices.map((invoice) => (
                     <tr key={invoice.id}>
@@ -522,12 +639,29 @@ export default function DepartmentWorkspace({
                         }}>
                           <input name="amount" type="number" min="0.01" max={invoice.balance} step="0.01" placeholder="Amount" required />
                           <select name="method" aria-label="Payment method" defaultValue="cash"><option value="cash">Cash</option><option value="insurance">Insurance</option><option value="mobile_money">Mobile money</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select>
+                          <input name="reference" aria-label="Payment reference" maxLength={120} placeholder="Reference" />
                           <button className="button button-quiet" type="submit" disabled={action.busy}>Record</button>
                         </form>
                       ) : "—"}</td>}
+                      <td>
+                        <details className="billing-payment-history">
+                          <summary>Payment history ({invoice.payments.length})</summary>
+                          {invoice.payments.length ? (
+                            <ul>
+                              {invoice.payments.map((payment) => (
+                                <li key={payment.id}>
+                                  <strong>{formatCurrency(Number(payment.amount))}</strong>
+                                  <span>{payment.method.replaceAll("_", " ")} · {new Date(payment.paid_at).toLocaleString()}</span>
+                                  {payment.reference && <small>Ref: {payment.reference}</small>}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : <p>No payments recorded yet.</p>}
+                        </details>
+                      </td>
                     </tr>
                   ))}
-                  {!invoices.length && <tr><td colSpan={manager ? 6 : 5} className="department-empty">No invoices yet.</td></tr>}
+                  {!invoices.length && <tr><td colSpan={manager ? 7 : 6} className="department-empty">No invoices yet.</td></tr>}
                 </tbody>
               </table>
             </div>

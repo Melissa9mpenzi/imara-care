@@ -137,6 +137,21 @@ export interface AppNotification {
   read_at: string | null;
 }
 
+export interface SupportRequest {
+  id: string;
+  ticket_number: string;
+  requester_id: string;
+  requester_role: string;
+  requester_name: string;
+  requester_email: string;
+  category: "access" | "account" | "workflow" | "technical" | "other";
+  subject: string;
+  message: string;
+  status: "open" | "in_progress" | "resolved";
+  created_at: string;
+  updated_at: string;
+}
+
 export interface NotificationList {
   items: AppNotification[];
   unread_count: number;
@@ -163,6 +178,18 @@ export interface DepartmentPatient {
   last_name: string;
   other_names: string | null;
   phone: string | null;
+}
+
+export interface DepartmentQueueEntry {
+  id: string;
+  queue_number: string;
+  priority: "routine" | "urgent" | "emergency";
+  status: string;
+  arrived_at: string;
+  visit_id: string;
+  visit_number: string;
+  reason: string;
+  patient: DepartmentPatient;
 }
 
 export interface MedicationOrder {
@@ -200,6 +227,14 @@ export interface BillingInvoice {
   paid_amount: string;
   balance: string;
   status: string;
+  payments: {
+    id: string;
+    amount: string;
+    method: string;
+    reference: string | null;
+    recorded_by: string;
+    paid_at: string;
+  }[];
   created_at: string;
 }
 

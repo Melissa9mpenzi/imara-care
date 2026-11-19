@@ -71,6 +71,7 @@ const mfaRequiredRoles = new Set([
   "facility_admin",
   "medical_director",
   "clinician",
+  "nurse",
   "pharmacist",
   "department_head",
 ]);
@@ -402,6 +403,8 @@ export const auth = betterAuth({
       jwt: {
         definePayload: ({ user }) => ({
           sub: user.id,
+          name: user.name,
+          email: user.email,
           facilityId: user.facilityId ?? facilityId,
           staffRole: user.staffRole ?? user.role ?? "staff",
           departmentCode: user.departmentCode ?? null,

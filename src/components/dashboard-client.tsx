@@ -11,6 +11,7 @@ import DepartmentWorkspace, {
 } from "@/components/department-workspaces";
 import StaffDirectory from "@/app/staff/staff-directory";
 import StaffProfile from "@/app/staff/staff-profile";
+import HelpSupport from "@/app/support/help-support";
 import type { FacilityStaffMember } from "@/lib/staff-directory";
 import type {
   AppNotification,
@@ -24,8 +25,24 @@ import type {
   Reminder,
 } from "@/lib/api";
 
-type Section = "overview" | "patients" | "appointments" | "queue" | "reminders" | "notifications" | "staff" | DepartmentModule;
+type Section = "overview" | "patients" | "appointments" | "queue" | "reminders" | "notifications" | "staff" | "support" | DepartmentModule;
 type Modal = "patient" | "patient-edit" | "patient-detail" | "profile" | "appointment" | "checkin" | "triage" | "reminder" | null;
+const staffNavigation: Record<string, Section[]> = {
+  admin: ["overview", "patients", "appointments", "queue", "support", "staff"],
+  facility_admin: ["overview", "patients", "appointments", "queue", "support", "staff"],
+  medical_director: ["overview", "patients", "appointments", "queue", "support"],
+  reception: ["overview", "patients", "appointments", "queue", "support"],
+  records: ["patients", "support"],
+  clinician: ["overview", "patients", "appointments", "queue", "support"],
+  nurse: ["queue", "support"],
+  department_head: ["support"],
+  pharmacist: ["support"],
+  pharmacy: ["support"],
+  laboratory: ["support"],
+  cashier: ["support"],
+  billing: ["support"],
+  theatre: ["support"],
+};
 
 type IconName =
   | "overview"
@@ -38,6 +55,7 @@ type IconName =
   | "theatre"
   | "security"
   | "staff"
+  | "support"
   | "notifications"
   | "add"
   | "search"
@@ -49,6 +67,7 @@ const navigation: { id: Section; label: string; icon: IconName; managerOnly?: bo
   { id: "patients", label: "Patients", icon: "patients" },
   { id: "appointments", label: "Appointments", icon: "appointments" },
   { id: "queue", label: "Queue & triage", icon: "queue" },
+  { id: "support", label: "Help & support", icon: "support" },
   { id: "staff", label: "Staff directory", icon: "staff", managerOnly: true },
 ];
 
@@ -60,6 +79,7 @@ const sectionLabels: Record<Section, string> = {
   reminders: "My reminders",
   notifications: "Notifications",
   staff: "Staff directory",
+  support: "Help & support",
   pharmacy: "Pharmacy",
   laboratory: "Laboratory",
   billing: "Billing & insurance",
@@ -85,6 +105,7 @@ function AppIcon({ name, size = 20 }: { name: IconName; size?: number }) {
     theatre: <><path d="M4 21V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v16M3 21h18M9 21v-5h6v5M12 7v5M9.5 9.5h5" /></>,
     security: <><path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z" /><path d="m9 12 2 2 4-4" /></>,
     staff: <><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="10" cy="7" r="4" /><path d="M20 8v6M17 11h6" /></>,
+    support: <><circle cx="12" cy="12" r="9" /><path d="M9.6 9a2.5 2.5 0 1 1 4.7 1.2c-.8 1.1-2.3 1.3-2.3 3M12 17h.01" /></>,
     notifications: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" /></>,
     add: <><path d="M12 5v14M5 12h14" /></>,
     search: <><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 4.5 4.5" /></>,
@@ -267,14 +288,33 @@ export default function DashboardClient({
   const canInviteStaff =
     session?.user.role === "admin" || staffRole === "facility_admin";
   const visibleNavigation =
-    staffRole === "department_head"
-      ? []
-      : navigation.filter((item) => !item.managerOnly || canInviteStaff);
+    navigation.filter((item) => {
+      if (item.managerOnly) return canInviteStaff && staffNavigation[staffRole]?.includes(item.id);
+      return staffNavigation[staffRole]?.includes(item.id) ?? false;
+    });
+  const departmentOnlyRole = [
+    "department_head",
+    "pharmacist",
+    "pharmacy",
+    "laboratory",
+    "cashier",
+    "billing",
+    "theatre",
+  ].includes(staffRole);
+  const canSearchPatients = staffNavigation[staffRole]?.includes("patients") ?? false;
+  const canRegisterPatients = ["admin", "facility_admin", "medical_director", "reception", "records"].includes(staffRole);
+  const canManagePatientRecords = ["admin", "facility_admin", "medical_director", "records"].includes(staffRole);
+  const canCheckInPatients = ["admin", "facility_admin", "medical_director", "reception"].includes(staffRole);
+  const canBookAppointments = ["admin", "facility_admin", "medical_director", "reception"].includes(staffRole);
+  const canCallPatients = ["admin", "facility_admin", "medical_director", "nurse", "clinician"].includes(staffRole);
+  const canTriagePatients = ["admin", "facility_admin", "medical_director", "nurse", "clinician"].includes(staffRole);
+  const isNurse = staffRole === "nurse";
+  const isRecordsStaff = staffRole === "records";
   const [section, setSection] = useState<Section>(initialSection);
   const [selectedStaffId, setSelectedStaffId] = useState<string | null>(initialStaffId);
   const activeDepartmentModule = departmentModules.find(
     (module) => module.id === section,
-  )?.id ?? (staffRole === "department_head" ? defaultDepartmentModule : undefined);
+  )?.id ?? (departmentOnlyRole ? defaultDepartmentModule : undefined);
   const [modal, setModal] = useState<Modal>(null);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -314,7 +354,50 @@ export default function DashboardClient({
       setLoading(false);
       return;
     }
-    if (staffRole === "department_head") {
+    if (isRecordsStaff) {
+      try {
+        setPatients(
+          await api.get<Patient[]>(
+            `/patients?limit=100&include_archived=${showArchivedPatients}`,
+          ),
+        );
+        setConnected(true);
+        setError("");
+      } catch (reason) {
+        setConnected(false);
+        setError(reason instanceof Error ? reason.message : "Could not load patient records.");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+    if (isNurse) {
+      try {
+        const facilityData = await api.get<{ departments: Department[]; timezone: string }>("/facility");
+        const assignedDepartment = facilityData.departments.find(
+          (department) => department.code === staffDepartmentCode,
+        );
+        if (!assignedDepartment) {
+          throw new Error("Ask an administrator to assign your account to an active department.");
+        }
+        const queueData = await api.get<QueueItem[]>(
+          `/queues?status=all&department_id=${encodeURIComponent(assignedDepartment.id)}`,
+        );
+        setDepartments([assignedDepartment]);
+        setQueue(queueData);
+        setQueueDepartment(assignedDepartment.id);
+        setFacilityTimezone(facilityData.timezone);
+        setConnected(true);
+        setError("");
+      } catch (reason) {
+        setConnected(false);
+        setError(reason instanceof Error ? reason.message : "Could not load your department queue.");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+    if (departmentOnlyRole) {
       setDashboard(null);
       setDepartments([]);
       setPatients([]);
@@ -366,25 +449,29 @@ export default function DashboardClient({
     } finally {
       setLoading(false);
     }
-  }, [showArchivedPatients, session?.user.id, staffRole]);
+  }, [departmentOnlyRole, isNurse, isRecordsStaff, showArchivedPatients, session?.user.id, staffDepartmentCode, staffRole]);
 
   useEffect(() => {
     void refresh();
-    if (staffRole === "department_head") return;
+    if (departmentOnlyRole || isRecordsStaff) return;
     const timer = window.setInterval(() => void refresh(), 15000);
     return () => window.clearInterval(timer);
-  }, [refresh, staffRole]);
+  }, [departmentOnlyRole, isRecordsStaff, refresh]);
 
   useEffect(() => {
-    if (staffRole === "department_head" && defaultDepartmentModule) {
+    if (departmentOnlyRole && defaultDepartmentModule) {
       setSection(defaultDepartmentModule);
+    } else if (isNurse) {
+      setSection("queue");
+    } else if (isRecordsStaff) {
+      setSection("patients");
     }
-  }, [staffRole, defaultDepartmentModule]);
+  }, [departmentOnlyRole, defaultDepartmentModule, isNurse, isRecordsStaff]);
 
   useEffect(() => {
     let lastGPressedAt = 0;
     function handleShortcut(event: KeyboardEvent) {
-      if (staffRole === "department_head") return;
+      if (departmentOnlyRole || isRecordsStaff) return;
       const target = event.target;
       const isTyping =
         target instanceof HTMLElement &&
@@ -409,10 +496,10 @@ export default function DashboardClient({
     }
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [section, staffRole]);
+  }, [departmentOnlyRole, isRecordsStaff, section]);
 
   useEffect(() => {
-    if (staffRole === "department_head") return;
+    if (!canSearchPatients) return;
     const timer = window.setTimeout(async () => {
       try {
         const results = await api.get<Patient[]>(
@@ -424,7 +511,7 @@ export default function DashboardClient({
       }
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [search, showArchivedPatients, staffRole]);
+  }, [canSearchPatients, search, showArchivedPatients]);
 
   const filteredPatients = useMemo(() => {
     if (!search.trim()) return patients;
@@ -804,7 +891,7 @@ export default function DashboardClient({
         </section>
 
         <div className="sidebar-spacer" />
-        {staffRole !== "department_head" && (
+        {!departmentOnlyRole && !isNurse && !isRecordsStaff && (
           <button
             className={`nav-item staff-invite-link ${section === "reminders" ? "active" : ""}`}
             onClick={() => setSection("reminders")}
@@ -826,14 +913,6 @@ export default function DashboardClient({
             <span>Invite staff</span>
           </a>
         )}
-        <div className="sidebar-help">
-          <div className="help-mark" aria-hidden="true">?</div>
-          <div>
-            <strong>Need a hand?</strong>
-            <span>Help &amp; support</span>
-          </div>
-          <span className="chevron">›</span>
-        </div>
         <div className="user-profile">
           <button
             className="user-profile-trigger"
@@ -873,7 +952,7 @@ export default function DashboardClient({
             <strong>{sectionLabels[section]}</strong>
           </div>
           <div className="topbar-actions">
-              {staffRole !== "department_head" && (
+              {canSearchPatients && (
                 <label className="global-search">
                   <AppIcon name="search" size={17} />
                   <input
@@ -892,12 +971,12 @@ export default function DashboardClient({
               <div className={`connection ${connected ? "online" : "offline"}`}>
                 <span className="connection-dot" /> {connected ? "Connected" : "Offline"}
               </div>
-              {staffRole !== "department_head" && (
+              {!departmentOnlyRole && !isNurse && !isRecordsStaff && (
                 <button className="button button-quiet topbar-reminder-button" onClick={() => setModal("reminder")}>
                   <AppIcon name="add" size={17} /> <span>Reminder</span>
                 </button>
               )}
-              {staffRole !== "department_head" && <div className="notification-menu-wrap">
+              {!departmentOnlyRole && !isNurse && !isRecordsStaff && <div className="notification-menu-wrap">
                 <button
                   className="icon-button notification-button"
                   aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`}
@@ -947,7 +1026,7 @@ export default function DashboardClient({
             </div>
           )}
 
-          {staffRole !== "department_head" && section === "overview" && (
+          {!departmentOnlyRole && !isNurse && !isRecordsStaff && section === "overview" && (
             <Overview
               todayLabel={todayLabel}
               greeting={`${greeting}, ${firstName}`}
@@ -956,6 +1035,10 @@ export default function DashboardClient({
               queue={queue}
               loading={loading}
               onNavigate={setSection}
+              canBook={canBookAppointments}
+              canRegister={canRegisterPatients}
+              canCall={canCallPatients}
+              canTriage={canTriagePatients}
               onBook={() => setModal("appointment")}
               onRegister={() => setModal("patient")}
               onCall={callPatient}
@@ -966,7 +1049,7 @@ export default function DashboardClient({
             />
           )}
 
-          {staffRole !== "department_head" && section === "patients" && (
+          {canSearchPatients && section === "patients" && (
             <PatientsView
               patients={filteredPatients}
               search={search}
@@ -974,6 +1057,9 @@ export default function DashboardClient({
               onSearch={setSearch}
               onToggleArchived={() => setShowArchivedPatients((value) => !value)}
               onRegister={() => setModal("patient")}
+              canRegister={canRegisterPatients}
+              canEdit={canManagePatientRecords}
+              canCheckIn={canCheckInPatients}
               onView={(patient) => void loadPatientProfile(patient, "patient-detail")}
               onEdit={(patient) => void loadPatientProfile(patient, "patient-edit")}
               onArchive={(patient) => void updatePatientStatus(patient, "inactive")}
@@ -985,28 +1071,33 @@ export default function DashboardClient({
             />
           )}
 
-          {staffRole !== "department_head" && section === "appointments" && (
+          {canBookAppointments && section === "appointments" && (
             <AppointmentsView
               appointments={appointments}
               onBook={() => setModal("appointment")}
               onUpdate={updateAppointment}
+              canBook={canBookAppointments}
+              canUpdate={canBookAppointments}
             />
           )}
 
-          {staffRole !== "department_head" && section === "queue" && (
+          {(!departmentOnlyRole || isNurse) && section === "queue" && (
             <QueueView
               items={visibleQueue}
               departments={departments}
               department={queueDepartment}
               onDepartmentChange={setQueueDepartment}
               onCall={callPatient}
+              canCall={canCallPatients}
+              canTriage={canTriagePatients}
+              canSelectDepartment={!isNurse}
               onTriage={(item) => {
                 setSelectedVisit(item);
                 setModal("triage");
               }}
             />
           )}
-          {staffRole !== "department_head" && section === "reminders" && (
+          {!departmentOnlyRole && !isNurse && !isRecordsStaff && section === "reminders" && (
             <RemindersView
               reminders={reminders}
               timezone={facilityTimezone}
@@ -1014,7 +1105,7 @@ export default function DashboardClient({
               onAction={updateReminder}
             />
           )}
-          {staffRole !== "department_head" && section === "notifications" && (
+          {!departmentOnlyRole && !isNurse && !isRecordsStaff && section === "notifications" && (
             <NotificationsView
               items={notifications}
               unreadCount={unreadCount}
@@ -1032,6 +1123,9 @@ export default function DashboardClient({
               <StaffDirectory staff={initialStaff} onSelect={setSelectedStaffId} />
             )
           )}
+          {section === "support" && (
+            <HelpSupport isManager={canInviteStaff} />
+          )}
           {activeDepartmentModule && (
             <DepartmentWorkspace
               key={activeDepartmentModule}
@@ -1040,7 +1134,7 @@ export default function DashboardClient({
               departmentCode={staffDepartmentCode}
             />
           )}
-          {staffRole === "department_head" && !activeDepartmentModule && (
+          {departmentOnlyRole && !activeDepartmentModule && (
             <div className="empty-state department-unavailable">
               <strong>No department workspace is available</strong>
               <p>Ask an administrator to assign you to Pharmacy, Laboratory, Billing &amp; insurance, or Theatre.</p>
@@ -1142,6 +1236,7 @@ export default function DashboardClient({
                   setModal(null);
                   void updatePatientStatus(patientProfile.patient, "active");
                 }}
+                canManage={canManagePatientRecords}
               />
             </ModalFrame>
           )}
@@ -1248,6 +1343,10 @@ function Overview({
   onRegister,
   onCall,
   onTriage,
+  canBook,
+  canRegister,
+  canCall,
+  canTriage,
 }: {
   todayLabel: string;
   greeting: string;
@@ -1260,6 +1359,10 @@ function Overview({
   onRegister: () => void;
   onCall: (item: QueueItem) => void;
   onTriage: (item: QueueItem) => void;
+  canBook: boolean;
+  canRegister: boolean;
+  canCall: boolean;
+  canTriage: boolean;
 }) {
   const stats = dashboard?.stats;
   const nextAppointments = appointments
@@ -1278,8 +1381,8 @@ function Overview({
           <p>Here&apos;s your facility snapshot for today. Let&apos;s make it a great one.</p>
         </div>
         <div className="heading-actions">
-          <button className="button button-quiet" onClick={onRegister}><AppIcon name="patients" size={18} /> Register patient</button>
-          <button className="button button-primary" onClick={onBook}><AppIcon name="add" size={18} /> Book appointment</button>
+          {canRegister && <button className="button button-quiet" onClick={onRegister}><AppIcon name="patients" size={18} /> Register patient</button>}
+          {canBook && <button className="button button-primary" onClick={onBook}><AppIcon name="add" size={18} /> Book appointment</button>}
         </div>
       </div>
 
@@ -1329,7 +1432,7 @@ function Overview({
             ))}
             {!nextAppointments.length && <EmptyState title="No upcoming appointments" detail="New bookings will appear here." />}
           </div>
-          <button className="panel-bottom-action" onClick={onBook}>+ Schedule an appointment</button>
+          {canBook && <button className="panel-bottom-action" onClick={onBook}>+ Schedule an appointment</button>}
         </section>
 
         <section className="panel queue-panel">
@@ -1342,8 +1445,8 @@ function Overview({
               <div className={`queue-chip priority-${item.priority}`}>{item.queue_number}</div>
               <div className="waiting-person"><strong>{displayName(item.patient)}</strong><span>{item.department.name} · {item.reason}</span></div>
               <div className="waiting-actions">
-                <button className="small-outline" onClick={() => onTriage(item)}>Triage</button>
-                <button className="small-primary" onClick={() => onCall(item)}>Call</button>
+                {canTriage && <button className="small-outline" onClick={() => onTriage(item)}>Triage</button>}
+                {canCall && <button className="small-primary" onClick={() => onCall(item)}>Call</button>}
               </div>
             </div>
           ))}
@@ -1352,9 +1455,9 @@ function Overview({
 
         <section className="panel quick-panel">
           <div className="panel-heading"><div><h3>Quick actions</h3><span className="panel-subtitle">Common front desk tasks</span></div></div>
-          <button className="quick-action" onClick={onRegister}><span className="quick-icon quick-green"><AppIcon name="patients" /></span><span><strong>Register a patient</strong><small>Create a new patient record</small></span><b aria-hidden="true">→</b></button>
+          {canRegister && <button className="quick-action" onClick={onRegister}><span className="quick-icon quick-green"><AppIcon name="patients" /></span><span><strong>Register a patient</strong><small>Create a new patient record</small></span><b aria-hidden="true">→</b></button>}
           <button className="quick-action" onClick={() => onNavigate("patients")}><span className="quick-icon quick-blue"><AppIcon name="search" /></span><span><strong>Find a patient</strong><small>Search the patient directory</small></span><b aria-hidden="true">→</b></button>
-          <button className="quick-action" onClick={onBook}><span className="quick-icon quick-purple"><AppIcon name="appointments" /></span><span><strong>Book an appointment</strong><small>Reserve a visit time</small></span><b aria-hidden="true">→</b></button>
+          {canBook && <button className="quick-action" onClick={onBook}><span className="quick-icon quick-purple"><AppIcon name="appointments" /></span><span><strong>Book an appointment</strong><small>Reserve a visit time</small></span><b aria-hidden="true">→</b></button>}
         </section>
       </div>
     </>
@@ -1594,6 +1697,9 @@ function PatientsView({
   onArchive,
   onRestore,
   onCheckIn,
+  canRegister,
+  canEdit,
+  canCheckIn,
 }: {
   patients: Patient[];
   search: string;
@@ -1606,12 +1712,15 @@ function PatientsView({
   onArchive: (patient: Patient) => void;
   onRestore: (patient: Patient) => void;
   onCheckIn: (patient: Patient) => void;
+  canRegister: boolean;
+  canEdit: boolean;
+  canCheckIn: boolean;
 }) {
   return (
     <>
       <div className="page-heading">
         <div><div className="eyebrow">PATIENT RECORDS</div><h1>Patients</h1><p>View, update and safely manage patient records.</p></div>
-        {!showArchived && <button className="button button-primary" onClick={onRegister}><span className="button-plus">+</span> Register patient</button>}
+        {!showArchived && canRegister && <button className="button button-primary" onClick={onRegister}><span className="button-plus">+</span> Register patient</button>}
       </div>
       <section className="panel directory-panel">
         <div className="directory-toolbar">
@@ -1631,6 +1740,8 @@ function PatientsView({
           onArchive={onArchive}
           onRestore={onRestore}
           onCheckIn={onCheckIn}
+          canEdit={canEdit}
+          canCheckIn={canCheckIn}
         />
       </section>
     </>
@@ -1645,6 +1756,8 @@ function PatientTable({
   onArchive,
   onRestore,
   onCheckIn,
+  canEdit,
+  canCheckIn,
 }: {
   patients: Patient[];
   showArchived: boolean;
@@ -1653,6 +1766,8 @@ function PatientTable({
   onArchive: (patient: Patient) => void;
   onRestore: (patient: Patient) => void;
   onCheckIn: (patient: Patient) => void;
+  canEdit: boolean;
+  canCheckIn: boolean;
 }) {
   return (
     <div className="table-scroll">
@@ -1670,14 +1785,12 @@ function PatientTable({
               <td>
                 <div className="patient-row-actions">
                   <button className="small-outline" onClick={() => onView(patient)}>View</button>
-                  {!showArchived && (
-                    <>
-                      <button className="small-outline" onClick={() => onEdit(patient)}>Edit</button>
-                      <button className="small-outline" onClick={() => onCheckIn(patient)}>Check in</button>
-                      <button className="small-outline patient-archive-action" onClick={() => onArchive(patient)}>Archive</button>
-                    </>
-                  )}
-                  {showArchived && (
+                  {!showArchived && canEdit && <>
+                    <button className="small-outline" onClick={() => onEdit(patient)}>Edit</button>
+                    <button className="small-outline patient-archive-action" onClick={() => onArchive(patient)}>Archive</button>
+                  </>}
+                  {!showArchived && canCheckIn && <button className="small-outline" onClick={() => onCheckIn(patient)}>Check in</button>}
+                  {showArchived && canEdit && (
                     <button className="small-outline" onClick={() => onRestore(patient)}>Restore</button>
                   )}
                 </div>
@@ -1691,12 +1804,12 @@ function PatientTable({
   );
 }
 
-function AppointmentsView({ appointments, onBook, onUpdate }: { appointments: Appointment[]; onBook: () => void; onUpdate: (appointment: Appointment, status: "confirmed" | "cancelled") => void }) {
+function AppointmentsView({ appointments, onBook, onUpdate, canBook, canUpdate }: { appointments: Appointment[]; onBook: () => void; onUpdate: (appointment: Appointment, status: "confirmed" | "cancelled") => void; canBook: boolean; canUpdate: boolean }) {
   return (
     <>
       <div className="page-heading">
         <div><div className="eyebrow">SCHEDULE</div><h1>Appointments</h1><p>Manage upcoming visits and keep the day moving.</p></div>
-        <button className="button button-primary" onClick={onBook}><span className="button-plus">+</span> Book appointment</button>
+        {canBook && <button className="button button-primary" onClick={onBook}><span className="button-plus">+</span> Book appointment</button>}
       </div>
       <section className="panel directory-panel">
         <div className="panel-heading appointment-view-heading"><div><h3>Upcoming schedule</h3><span className="panel-subtitle">Today and the next seven days</span></div><span className="result-count">{appointments.length} appointments</span></div>
@@ -1708,10 +1821,10 @@ function AppointmentsView({ appointments, onBook, onUpdate }: { appointments: Ap
             <div className="table-person schedule-person"><div className="person-avatar">{appointment.patient.first_name[0]}{appointment.patient.last_name[0]}</div><span><strong>{displayName(appointment.patient)}</strong><small>{appointment.patient.patient_number} · {appointment.reason}</small></span></div>
             <div className="schedule-department">{appointment.department.name}{appointment.clinician && <small>{appointment.clinician}</small>}</div>
             <span className={`status-pill status-${appointment.status}`}>{appointment.status}</span>
-            <div className="schedule-actions">
+            {canUpdate && <div className="schedule-actions">
               {appointment.status === "booked" && <button className="small-outline" onClick={() => onUpdate(appointment, "confirmed")}>Confirm</button>}
               {["booked", "confirmed"].includes(appointment.status) && <button className="icon-button" aria-label="Cancel appointment" onClick={() => onUpdate(appointment, "cancelled")}>×</button>}
-            </div>
+            </div>}
           </div>
         ))}
       </section>
@@ -1719,7 +1832,7 @@ function AppointmentsView({ appointments, onBook, onUpdate }: { appointments: Ap
   );
 }
 
-function QueueView({ items, departments, department, onDepartmentChange, onCall, onTriage }: { items: QueueItem[]; departments: Department[]; department: string; onDepartmentChange: (value: string) => void; onCall: (item: QueueItem) => void; onTriage: (item: QueueItem) => void }) {
+function QueueView({ items, departments, department, onDepartmentChange, onCall, onTriage, canCall, canTriage, canSelectDepartment }: { items: QueueItem[]; departments: Department[]; department: string; onDepartmentChange: (value: string) => void; onCall: (item: QueueItem) => void; onTriage: (item: QueueItem) => void; canCall: boolean; canTriage: boolean; canSelectDepartment: boolean }) {
   return (
     <>
       <div className="page-heading">
@@ -1729,7 +1842,7 @@ function QueueView({ items, departments, department, onDepartmentChange, onCall,
       <section className="panel directory-panel">
         <div className="directory-toolbar">
           <div><h3 className="toolbar-title">Today&apos;s waiting room</h3><span className="panel-subtitle">{items.length} open queue entries</span></div>
-          <select className="filter-select" value={department} onChange={(event) => onDepartmentChange(event.target.value)}><option value="all">All departments</option>{departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
+          {canSelectDepartment && <select className="filter-select" value={department} onChange={(event) => onDepartmentChange(event.target.value)}><option value="all">All departments</option>{departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}
         </div>
         {!items.length && <EmptyState title="No patients in this queue" detail="Patients appear here after front desk check-in." />}
         {items.map((item) => (
@@ -1739,7 +1852,7 @@ function QueueView({ items, departments, department, onDepartmentChange, onCall,
             <div className="queue-reason"><strong>{item.reason}</strong><span>{item.department.name}</span></div>
             <div className={`priority-label priority-text-${item.priority}`}><i />{item.priority}</div>
             <div className="queue-arrival">{Math.max(0, Math.floor((Date.now() - new Date(item.arrived_at).getTime()) / 60000))} min<span>waiting</span></div>
-            <div className="schedule-actions"><button className="small-outline" onClick={() => onTriage(item)}>{item.triage ? "Edit triage" : "Triage"}</button>{item.status === "waiting" && <button className="small-primary" onClick={() => onCall(item)}>Call patient</button>}</div>
+            <div className="schedule-actions">{canTriage && <button className="small-outline" onClick={() => onTriage(item)}>{item.triage ? "Edit triage" : "Triage"}</button>}{canCall && item.status === "waiting" && <button className="small-primary" onClick={() => onCall(item)}>Call patient</button>}</div>
           </div>
         ))}
       </section>
@@ -1793,11 +1906,13 @@ function PatientProfileDetails({
   onEdit,
   onArchive,
   onRestore,
+  canManage,
 }: {
   profile: PatientProfile;
   onEdit: () => void;
   onArchive: () => void;
   onRestore: () => void;
+  canManage: boolean;
 }) {
   const { patient, visits } = profile;
   const details = [
@@ -1842,7 +1957,7 @@ function PatientProfileDetails({
           <p className="patient-history-empty">No visit history recorded.</p>
         )}
       </section>
-      <div className="modal-footer patient-profile-actions">
+      {canManage && <div className="modal-footer patient-profile-actions">
         {patient.status === "active" ? (
           <>
             <button type="button" className="button button-quiet patient-archive-action" onClick={onArchive}>Archive record</button>
@@ -1851,7 +1966,7 @@ function PatientProfileDetails({
         ) : (
           <button type="button" className="button button-primary" onClick={onRestore}>Restore patient</button>
         )}
-      </div>
+      </div>}
     </div>
   );
 }
