@@ -41,6 +41,10 @@ export function ensureAuthSupportTables() {
         ADD COLUMN IF NOT EXISTS department_code TEXT;
       ALTER TABLE "user"
         ADD COLUMN IF NOT EXISTS "departmentCode" TEXT;
+      ALTER TABLE "user"
+        ADD COLUMN IF NOT EXISTS "username" TEXT;
+      CREATE UNIQUE INDEX IF NOT EXISTS user_username_key
+        ON "user" ("username");
       CREATE TABLE IF NOT EXISTS auth_audit_events (
         id TEXT PRIMARY KEY,
         actor_user_id TEXT,

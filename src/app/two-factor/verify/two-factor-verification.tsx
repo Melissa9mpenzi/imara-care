@@ -31,6 +31,7 @@ export default function TwoFactorVerification() {
         return;
       }
       sessionStorage.removeItem("imara-pending-auth-email");
+      sessionStorage.removeItem("imara-pending-auth-username");
       router.replace("/");
       router.refresh();
     } catch {
@@ -43,8 +44,10 @@ export default function TwoFactorVerification() {
   }
 
   async function sendEmailCode() {
+    if (busyRef.current) return;
     setError("");
     setLocalEmailCode("");
+    busyRef.current = true;
     setBusy(true);
     try {
       const result = await authClient.twoFactor.sendOtp();
@@ -58,9 +61,15 @@ export default function TwoFactorVerification() {
       setCode("");
       if (process.env.NODE_ENV === "development") {
         const email = sessionStorage.getItem("imara-pending-auth-email");
-        if (email) {
+        const username = sessionStorage.getItem("imara-pending-auth-username");
+        const localCodeQuery = email
+          ? `email=${encodeURIComponent(email)}`
+          : username
+            ? `username=${encodeURIComponent(username)}`
+            : "";
+        if (localCodeQuery) {
           const mailbox = await fetch(
-            `/api/dev/auth/reset-code?purpose=two-factor&email=${encodeURIComponent(email)}`,
+            `/api/dev/auth/reset-code?purpose=two-factor&${localCodeQuery}`,
             { cache: "no-store" },
           );
           if (mailbox.ok) {
@@ -72,8 +81,17 @@ export default function TwoFactorVerification() {
     } catch {
       setError("Email verification is temporarily unavailable. Try again shortly.");
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
+  }
+
+  function useAuthenticatorApp() {
+    setUseEmailCode(false);
+    setUseRecoveryCode(false);
+    setCode("");
+    setError("");
+    setLocalEmailCode("");
   }
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -92,6 +110,26 @@ export default function TwoFactorVerification() {
             ? "Enter the six-digit sign-in code sent to your email."
             : "Enter the six-digit code from your authenticator app."}
       </p>
+      <div className="verification-methods" role="group" aria-label="Verification method">
+        <button
+          className={`verification-method${!useEmailCode && !useRecoveryCode ? " is-active" : ""}`}
+          type="button"
+          aria-pressed={!useEmailCode && !useRecoveryCode}
+          disabled={busy}
+          onClick={useAuthenticatorApp}
+        >
+          Authenticator app
+        </button>
+        <button
+          className={`verification-method${useEmailCode ? " is-active" : ""}`}
+          type="button"
+          aria-pressed={useEmailCode}
+          disabled={busy}
+          onClick={() => void sendEmailCode()}
+        >
+          Email me a code
+        </button>
+      </div>
       {localEmailCode && (
         <p className="auth-note" role="status">
           Local development sign-in code: <strong>{localEmailCode}</strong>
@@ -119,15 +157,16 @@ export default function TwoFactorVerification() {
               ? event.target.value.replace(/[^A-Za-z0-9-]/g, "").slice(0, 11)
               : event.target.value.replace(/\D/g, "").slice(0, 6);
             setCode(next);
-            if (!useRecoveryCode && next.length === 6) void verify(next);
           }}
         />
         {error && <p className="auth-error" role="alert">{error}</p>}
-        {useRecoveryCode && (
-          <button className="primary-button" type="submit" disabled={busy || code.length < 10}>
-            {busy ? "Verifying..." : "Use recovery code"}
-          </button>
-        )}
+        <button
+          className="primary-button"
+          type="submit"
+          disabled={busy || (useRecoveryCode ? code.length < 10 : code.length !== 6)}
+        >
+          {busy ? "Verifying..." : "Verify code"}
+        </button>
         {useEmailCode && !useRecoveryCode && (
           <button
             className="text-button"
@@ -139,54 +178,19 @@ export default function TwoFactorVerification() {
           </button>
         )}
       </form>
-      {!useRecoveryCode && !useEmailCode && (
-        <button
-          className="text-button"
-          type="button"
-          disabled={busy}
-          onClick={() => void sendEmailCode()}
-        >
-          Email me a sign-in code instead
-        </button>
-      )}
       {!useRecoveryCode && (
         <button
           className="text-button"
           type="button"
+          disabled={busy}
           onClick={() => {
             setUseRecoveryCode(true);
+            setUseEmailCode(false);
             setCode("");
             setError("");
           }}
         >
           Use a recovery code
-        </button>
-      )}
-      {useEmailCode && (
-        <button
-          className="text-button"
-          type="button"
-          onClick={() => {
-            setUseEmailCode(false);
-            setLocalEmailCode("");
-            setCode("");
-            setError("");
-          }}
-        >
-          Use authenticator app instead
-        </button>
-      )}
-      {useRecoveryCode && (
-        <button
-          className="text-button"
-          type="button"
-          onClick={() => {
-            setUseRecoveryCode(false);
-            setCode("");
-            setError("");
-          }}
-        >
-          Use authenticator app instead
         </button>
       )}
       <p className="auth-footnote">For your security, this sign-in challenge expires after 10 minutes.</p>

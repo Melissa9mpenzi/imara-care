@@ -75,7 +75,12 @@ if (missingTables.length > 0) {
 const schemaPool = new Pool({ connectionString });
 try {
   await schemaPool.query(
-    'ALTER TABLE auth."user" ADD COLUMN IF NOT EXISTS "departmentCode" TEXT',
+    `ALTER TABLE auth."user"
+       ADD COLUMN IF NOT EXISTS "departmentCode" TEXT;
+     ALTER TABLE auth."user"
+       ADD COLUMN IF NOT EXISTS "username" TEXT;
+     CREATE UNIQUE INDEX IF NOT EXISTS user_username_key
+       ON auth."user" ("username")`,
   );
 } finally {
   await schemaPool.end();

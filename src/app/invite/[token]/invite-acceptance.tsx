@@ -26,6 +26,7 @@ export default function InviteAcceptance({ token }: { token: string }) {
   const [busy, setBusy] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -60,6 +61,7 @@ export default function InviteAcceptance({ token }: { token: string }) {
         body: JSON.stringify({
           name: invitation?.fullName ?? "",
           email: invitation?.email ?? "",
+          username: username.trim(),
           password,
           callbackURL: "/",
         }),
@@ -108,6 +110,21 @@ export default function InviteAcceptance({ token }: { token: string }) {
           Confirm the invitation by creating a password for {invitation.email}.
         </p>
         <form className="auth-form" onSubmit={submit}>
+          <label htmlFor="username">Choose a username</label>
+          <input
+            id="username"
+            name="username"
+            autoComplete="username"
+            minLength={3}
+            maxLength={30}
+            pattern="[A-Za-z0-9_.]+"
+            required
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+          />
+          <span className="auth-field-hint">
+            Use 3-30 letters, numbers, periods, or underscores. You can also sign in with your email.
+          </span>
           <label htmlFor="password">Create password</label>
           <div className="password-field">
             <input
@@ -129,7 +146,11 @@ export default function InviteAcceptance({ token }: { token: string }) {
             {checklist.map((item) => <li key={item}>{item}</li>)}
           </ul>
           {error && <p className="auth-error" role="alert">{error}</p>}
-          <button className="primary-button" type="submit" disabled={busy || password.length < 12}>
+          <button
+            className="primary-button"
+            type="submit"
+            disabled={busy || username.trim().length < 3 || password.length < 12}
+          >
             {busy ? "Activating account..." : "Create account"}
           </button>
         </form>

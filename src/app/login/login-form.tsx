@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 
-export default function LoginForm() {
+export default function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
   const router = useRouter();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -14,16 +14,31 @@ export default function LoginForm() {
     setError("");
     setBusy(true);
     const form = new FormData(event.currentTarget);
-    const email = String(form.get("email") ?? "");
-    sessionStorage.setItem("imara-pending-auth-email", email.trim().toLowerCase());
+    const identifier = String(form.get("identifier") ?? "").trim();
+    const isEmail = identifier.includes("@");
+    sessionStorage.removeItem("imara-pending-auth-email");
+    sessionStorage.removeItem("imara-pending-auth-username");
+    if (isEmail) {
+      sessionStorage.setItem("imara-pending-auth-email", identifier.toLowerCase());
+    } else {
+      sessionStorage.setItem("imara-pending-auth-username", identifier.toLowerCase());
+    }
     try {
-      const result = await authClient.signIn.email({
-        email,
-        password: String(form.get("password") ?? ""),
-        callbackURL: "/",
-      });
+      const password = String(form.get("password") ?? "");
+      const result = isEmail
+        ? await authClient.signIn.email({
+            email: identifier,
+            password,
+            callbackURL: "/",
+          })
+        : await authClient.signIn.username({
+            username: identifier,
+            password,
+            callbackURL: "/",
+          });
       if (result.error) {
         sessionStorage.removeItem("imara-pending-auth-email");
+        sessionStorage.removeItem("imara-pending-auth-username");
         setError("That email or password did not work. Try again or contact your administrator.");
         return;
       }
@@ -37,12 +52,34 @@ export default function LoginForm() {
         return;
       }
       sessionStorage.removeItem("imara-pending-auth-email");
+      sessionStorage.removeItem("imara-pending-auth-username");
       router.replace("/");
       router.refresh();
     } catch {
       sessionStorage.removeItem("imara-pending-auth-email");
+      sessionStorage.removeItem("imara-pending-auth-username");
       setError("Sign in is temporarily unavailable. Try again shortly.");
     } finally {
+      setBusy(false);
+    }
+  }
+
+  async function signInWithGoogle() {
+    setError("");
+    setBusy(true);
+    sessionStorage.removeItem("imara-pending-auth-email");
+    sessionStorage.removeItem("imara-pending-auth-username");
+    try {
+      const result = await authClient.signIn.social({
+        provider: "google",
+        callbackURL: "/",
+      });
+      if (result.error) {
+        setError("Google sign-in could not be started. Use your work account or contact your administrator.");
+        setBusy(false);
+      }
+    } catch {
+      setError("Google sign-in is temporarily unavailable. Try again shortly.");
       setBusy(false);
     }
   }
@@ -123,21 +160,21 @@ export default function LoginForm() {
             </span>
             <span className="eyebrow">STAFF PORTAL</span>
             <h1>Welcome back</h1>
-            <p>Sign in with the work email linked to your staff account.</p>
+            <p>Sign in with your work email or username.</p>
           </div>
           <form className="auth-form" onSubmit={submit}>
-            <label htmlFor="email">Work email</label>
+            <label htmlFor="identifier">Work email or username</label>
             <div className="auth-input-wrap">
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
                 <rect x="3" y="5" width="18" height="14" rx="3" />
                 <path d="m4 7 8 6 8-6" />
               </svg>
               <input
-                id="email"
-                name="email"
-                type="email"
+                id="identifier"
+                name="identifier"
+                type="text"
                 autoComplete="username"
-                placeholder="you@hospital.org"
+                placeholder="you@hospital.org or username"
                 required
               />
             </div>
@@ -169,6 +206,20 @@ export default function LoginForm() {
               )}
             </button>
           </form>
+          {googleEnabled && (
+            <>
+              <div className="auth-or-divider"><span>or</span></div>
+              <button
+                className="google-sign-in-button"
+                type="button"
+                disabled={busy}
+                onClick={() => void signInWithGoogle()}
+              >
+                <span aria-hidden="true">G</span>
+                Continue with Google
+              </button>
+            </>
+          )}
           <div className="auth-access-note">
             <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
               <path d="M12 3 19 6v5c0 4.5-2.9 8-7 10-4.1-2-7-5.5-7-10V6l7-3Z" />

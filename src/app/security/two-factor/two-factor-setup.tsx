@@ -19,10 +19,12 @@ function downloadRecoveryCodes(codes: string[]) {
 
 export default function TwoFactorSetup({
   email,
+  username: initialUsername,
   enabled,
   required,
 }: {
   email: string;
+  username: string;
   enabled: boolean;
   required: boolean;
 }) {
@@ -36,6 +38,11 @@ export default function TwoFactorSetup({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [showNewCodes, setShowNewCodes] = useState(false);
+  const [username, setUsername] = useState(initialUsername);
+  const [newUsername, setNewUsername] = useState("");
+  const [usernameError, setUsernameError] = useState("");
+  const [usernameSaved, setUsernameSaved] = useState(false);
+  const [usernameBusy, setUsernameBusy] = useState(false);
 
   useEffect(() => {
     if (!totpUri) return;
@@ -121,6 +128,30 @@ export default function TwoFactorSetup({
     }
   }
 
+  async function saveUsername(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setUsernameBusy(true);
+    setUsernameError("");
+    setUsernameSaved(false);
+    try {
+      const nextUsername = newUsername.trim().toLowerCase();
+      const result = await authClient.updateUser({ username: nextUsername });
+      if (result.error) {
+        setUsernameError(
+          "That username is unavailable or invalid. Choose another and try again.",
+        );
+        return;
+      }
+      setUsername(nextUsername);
+      setNewUsername("");
+      setUsernameSaved(true);
+    } catch {
+      setUsernameError("We could not save your username. Try again shortly.");
+    } finally {
+      setUsernameBusy(false);
+    }
+  }
+
   const manualSecret = totpUri ? new URL(totpUri).searchParams.get("secret") : null;
 
   return (
@@ -132,6 +163,38 @@ export default function TwoFactorSetup({
           ? `An authenticator app protects ${email}.`
           : "Use an authenticator app to generate a six-digit sign-in code."}
       </p>
+      <div className="auth-note">
+        {username
+        ? <>Username sign-in is enabled as <strong>{username}</strong>.</>
+        : "Add a username to sign in without entering your email address."}
+      </div>
+      {!username && (
+        <form className="auth-form" onSubmit={saveUsername}>
+          <label htmlFor="staff-username">Choose a username</label>
+          <input
+            id="staff-username"
+            autoComplete="username"
+            minLength={3}
+            maxLength={30}
+            pattern="[A-Za-z0-9_.]+"
+            required
+            value={newUsername}
+            onChange={(event) => setNewUsername(event.target.value)}
+          />
+          <p className="auth-field-hint">
+            Use 3-30 letters, numbers, periods, or underscores. Usernames cannot be changed later.
+          </p>
+          {usernameError && <p className="auth-error" role="alert">{usernameError}</p>}
+          {usernameSaved && <p className="auth-success" role="status">Username saved.</p>}
+          <button
+            className="primary-button"
+            type="submit"
+            disabled={usernameBusy || newUsername.trim().length < 3}
+          >
+            {usernameBusy ? "Saving..." : "Save username"}
+          </button>
+        </form>
+      )}
       {error && <p className="auth-error" role="alert">{error}</p>}
 
       {enabled && !showNewCodes && (

@@ -2,8 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { hash, verify } from "@node-rs/argon2";
 import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
+import { deleteSessionCookie } from "better-auth/cookies";
 import nodemailer from "nodemailer";
-import { admin, emailOTP, jwt, twoFactor } from "better-auth/plugins";
+import { admin, emailOTP, jwt, twoFactor, username } from "better-auth/plugins";
 import {
   authDatabase,
   ensureAuthSupportTables,
@@ -66,6 +67,12 @@ if (authBase.hostname === "localhost" || authBase.hostname === "127.0.0.1") {
   trustedOrigins.add(alternateLoopback.origin);
 }
 const loginWindowMilliseconds = 15 * 60 * 1000;
+const googleClientId = (
+  process.env.GOOGLE_CLIENT_ID ?? process.env.AUTH_GOOGLE_CLIENT_ID
+)?.trim();
+const googleClientSecret = (
+  process.env.GOOGLE_CLIENT_SECRET ?? process.env.AUTH_GOOGLE_CLIENT_SECRET
+)?.trim();
 const mfaRequiredRoles = new Set([
   "admin",
   "facility_admin",
@@ -327,6 +334,23 @@ export const auth = betterAuth({
       verify: ({ hash: encodedHash, password }) => verify(encodedHash, password),
     },
   },
+  account: {
+    accountLinking: {
+      enabled: true,
+      trustedProviders: ["google"],
+      requireLocalEmailVerified: true,
+    },
+  },
+  socialProviders:
+    googleClientId && googleClientSecret
+      ? {
+          google: {
+            clientId: googleClientId,
+            clientSecret: googleClientSecret,
+            disableSignUp: true,
+          },
+        }
+      : {},
   user: {
     additionalFields: {
       facilityId: { type: "string", required: false, input: false },
@@ -364,6 +388,12 @@ export const auth = betterAuth({
   },
   plugins: [
     admin(),
+    username({
+      minUsernameLength: 3,
+      maxUsernameLength: 30,
+      immutableUsername: true,
+      displayUsername: false,
+    }),
     twoFactor({
       issuer: "IMARA-CARE",
       totpOptions: { digits: 6, period: 30 },
@@ -421,6 +451,7 @@ export const auth = betterAuth({
     storage: "database",
     customRules: {
       "/sign-in/email": { window: 15 * 60, max: 10 },
+      "/sign-in/username": { window: 15 * 60, max: 10 },
       "/sign-up/email": { window: 15 * 60, max: 10 },
       "/two-factor/send-otp": { window: 60, max: 3 },
     },
@@ -440,6 +471,35 @@ export const auth = betterAuth({
 
       if (ctx.path === "/sign-in/email") {
         const email = normalizedEmail(ctx.body?.email);
+        if (!email) return;
+        const result = await queryAuthDatabase<{
+          lockedUntil: string | null;
+        }>(
+          'SELECT locked_until AS "lockedUntil" FROM auth_login_limits WHERE email_hash = ?',
+          [emailHash(email)],
+        );
+        const limit = result.rows[0];
+        if (limit?.lockedUntil && Date.parse(limit.lockedUntil) > Date.now()) {
+          await recordAuthAudit("login.locked", { facilityId, email });
+          throw new APIError("TOO_MANY_REQUESTS", {
+            message: "Too many sign-in attempts. Try again in 15 minutes.",
+          });
+        }
+        return;
+      }
+
+      if (ctx.path === "/sign-in/username") {
+        const username = typeof ctx.body?.username === "string"
+          ? ctx.body.username.trim().toLowerCase()
+          : "";
+        if (!username) return;
+        const account = await queryAuthDatabase<{
+          email: string;
+        }>(
+          'SELECT email FROM "user" WHERE "username" = ?',
+          [username],
+        );
+        const email = normalizedEmail(account.rows[0]?.email);
         if (!email) return;
         const result = await queryAuthDatabase<{
           lockedUntil: string | null;
@@ -525,15 +585,29 @@ export const auth = betterAuth({
         });
       }
 
-      if (ctx.path === "/sign-in/email") {
+      if (ctx.path === "/sign-in/email" || ctx.path === "/sign-in/username") {
         const session = ctx.context.newSession;
-        const email = normalizedEmail(ctx.body?.email);
+        const emailFromBody = normalizedEmail(ctx.body?.email);
+        const username = typeof ctx.body?.username === "string"
+          ? ctx.body.username.trim().toLowerCase()
+          : "";
+        const loginAccount = emailFromBody
+          ? undefined
+          : username
+            ? await queryAuthDatabase<{ email: string }>(
+                'SELECT email FROM "user" WHERE "username" = ?',
+                [username],
+              )
+            : undefined;
+        const email = emailFromBody || normalizedEmail(loginAccount?.rows[0]?.email);
         const response = ctx.context.returned;
-        const twoFactorChallenge =
+        const hasTwoFactorRedirect =
           typeof response === "object" &&
           response !== null &&
           "twoFactorRedirect" in response &&
           response.twoFactorRedirect === true;
+        const twoFactorChallenge =
+          hasTwoFactorRedirect || session?.user.twoFactorEnabled === true;
         if (email && session) {
           await queryAuthDatabase(
             "DELETE FROM auth_login_limits WHERE email_hash = ?",
@@ -551,9 +625,50 @@ export const auth = betterAuth({
           {
           actorUserId: session?.user.id,
           facilityId: session?.user.facilityId,
-          email: ctx.body?.email,
+          email,
           },
         );
+      }
+
+      if (ctx.path === "/callback/google" && ctx.context.newSession) {
+        const pending = ctx.context.newSession;
+        if (pending.user.twoFactorEnabled) {
+          deleteSessionCookie(ctx, true);
+          await ctx.context.internalAdapter.deleteSession(pending.session.token);
+          ctx.context.setNewSession(null);
+          const maxAge = 600;
+          const twoFactorCookie = ctx.context.createAuthCookie("two_factor", { maxAge });
+          const identifier = `2fa-${randomUUID().replaceAll("-", "")}`;
+          const expiresAt = new Date(Date.now() + maxAge * 1000);
+          await ctx.context.internalAdapter.createVerificationValue({
+            value: pending.user.id,
+            identifier,
+            expiresAt,
+          });
+          await ctx.context.internalAdapter.createVerificationValue({
+            value: "0",
+            identifier: `2fa-attempts-${identifier}`,
+            expiresAt,
+          });
+          await ctx.setSignedCookie(
+            twoFactorCookie.name,
+            identifier,
+            ctx.context.secret,
+            twoFactorCookie.attributes,
+          );
+          ctx.setHeader("Location", new URL("/two-factor/verify", authBaseURL).toString());
+          await recordAuthAudit("mfa.challenge", {
+            actorUserId: pending.user.id,
+            facilityId: pending.user.facilityId ?? facilityId,
+            email: pending.user.email,
+          });
+        } else {
+          await recordAuthAudit("login.success", {
+            actorUserId: ctx.context.newSession.user.id,
+            facilityId: ctx.context.newSession.user.facilityId ?? facilityId,
+            email: ctx.context.newSession.user.email,
+          });
+        }
       }
 
       if (ctx.path === "/email-otp/reset-password") {

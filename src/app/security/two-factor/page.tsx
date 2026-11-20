@@ -12,6 +12,7 @@ export default async function TwoFactorSettingsPage() {
     <main className="auth-page">
       <TwoFactorSetup
         email={session.user.email}
+        username={session.user.username ?? ""}
         enabled={session.user.twoFactorEnabled === true}
         required={requiresMfa(role)}
       />

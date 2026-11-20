@@ -3,6 +3,7 @@ import {
   getLocalPasswordResetCode,
   getLocalTwoFactorCode,
 } from "@/lib/auth";
+import { queryAuthDatabase } from "@/lib/auth-database";
 
 const loopbackHosts = new Set(["localhost", "127.0.0.1", "::1"]);
 
@@ -19,8 +20,19 @@ export async function GET(request: Request) {
     return NextResponse.json({ detail: "Not found." }, { status: 404 });
   }
 
-  const email = url.searchParams.get("email")?.trim().toLowerCase() ?? "";
+  let email = url.searchParams.get("email")?.trim().toLowerCase() ?? "";
   const purpose = url.searchParams.get("purpose") ?? "password-reset";
+  if (!email && purpose === "two-factor") {
+    const username = url.searchParams.get("username")?.trim().toLowerCase() ?? "";
+    if (!/^[a-z0-9_.]{3,30}$/.test(username)) {
+      return NextResponse.json({ detail: "Not found." }, { status: 404 });
+    }
+    const result = await queryAuthDatabase<{ email: string }>(
+      'SELECT email FROM "user" WHERE "username" = ?',
+      [username],
+    );
+    email = result.rows[0]?.email.trim().toLowerCase() ?? "";
+  }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
     return NextResponse.json({ detail: "Not found." }, { status: 404 });
   }

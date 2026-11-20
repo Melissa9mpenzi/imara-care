@@ -7,6 +7,7 @@ import {
   inferAdditionalFields,
   jwtClient,
   twoFactorClient,
+  usernameClient,
 } from "better-auth/client/plugins";
 import type { auth } from "@/lib/auth";
 
@@ -17,5 +18,6 @@ export const authClient = createAuthClient({
     inferAdditionalFields<typeof auth>(),
     jwtClient(),
     twoFactorClient({ twoFactorPage: "/two-factor/verify" }),
+    usernameClient(),
   ],
 });
