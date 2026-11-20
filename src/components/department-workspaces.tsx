@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api } from "@/lib/api";
+import SpreadsheetImport from "@/components/spreadsheet-import";
 import type {
   BillingInvoice,
   DepartmentQueueEntry,
@@ -397,6 +398,26 @@ export default function DepartmentWorkspace({
                 <button className="button button-primary" type="submit" disabled={action.busy}>Add stock item</button>
               </form>
             </section>
+          )}
+          {manager && (
+            <SpreadsheetImport
+              endpoint="/pharmacy/stock/import"
+              title="Bulk import medicine stock"
+              description="Preview a CSV or Excel inventory list before adding or receiving stock."
+              templateName="medicine-stock-template.csv"
+              headers={[
+                "name",
+                "strength",
+                "form",
+                "unit",
+                "quantity_on_hand",
+                "reorder_level",
+                "unit_price",
+              ]}
+              requireReference
+              confirmRestock
+              onImported={() => void refresh()}
+            />
           )}
           {canCreateClinicalOrder && (
             <section className="panel department-panel">

@@ -5,7 +5,7 @@ import type { FormEvent } from "react";
 import { api } from "@/lib/api";
 import type { SupportRequest } from "@/lib/api";
 
-const SUPPORT_EMAIL = "melissampeenzi@gmail.com";
+const SUPPORT_EMAIL = "melissampenzi@gmail.com";
 const supportStatuses: SupportRequest["status"][] = ["open", "in_progress", "resolved"];
 
 const supportCategories: { value: SupportRequest["category"]; label: string }[] = [

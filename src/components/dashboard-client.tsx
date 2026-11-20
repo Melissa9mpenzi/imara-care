@@ -12,6 +12,7 @@ import DepartmentWorkspace, {
 import StaffDirectory from "@/app/staff/staff-directory";
 import StaffProfile from "@/app/staff/staff-profile";
 import HelpSupport from "@/app/support/help-support";
+import SpreadsheetImport from "@/components/spreadsheet-import";
 import type { FacilityStaffMember } from "@/lib/staff-directory";
 import type {
   AppNotification,
@@ -86,11 +87,16 @@ const sectionLabels: Record<Section, string> = {
   theatre: "Theatre",
 };
 
-const departmentModules: { id: DepartmentModule; label: string; icon: IconName }[] = [
-  { id: "pharmacy", label: "Pharmacy", icon: "pharmacy" },
-  { id: "laboratory", label: "Laboratory", icon: "laboratory" },
-  { id: "billing", label: "Billing & insurance", icon: "billing" },
-  { id: "theatre", label: "Theatre", icon: "theatre" },
+const departmentModules: {
+  id: DepartmentModule;
+  label: string;
+  icon: IconName;
+  departmentCode: string;
+}[] = [
+  { id: "pharmacy", label: "Pharmacy", icon: "pharmacy", departmentCode: "PHARM" },
+  { id: "laboratory", label: "Laboratory", icon: "laboratory", departmentCode: "LAB" },
+  { id: "billing", label: "Billing & insurance", icon: "billing", departmentCode: "BILL" },
+  { id: "theatre", label: "Theatre", icon: "theatre", departmentCode: "THR" },
 ];
 
 function AppIcon({ name, size = 20 }: { name: IconName; size?: number }) {
@@ -285,6 +291,7 @@ export default function DashboardClient({
     canAccessDepartmentModule(module.id, staffRole, staffDepartmentCode),
   );
   const defaultDepartmentModule = visibleDepartmentModules[0]?.id;
+  const canViewDepartmentQueues = staffNavigation[staffRole]?.includes("queue") ?? false;
   const canInviteStaff =
     session?.user.role === "admin" || staffRole === "facility_admin";
   const visibleNavigation =
@@ -318,6 +325,9 @@ export default function DashboardClient({
   const [modal, setModal] = useState<Modal>(null);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const sidebarDepartments = dashboard?.departments.length
+    ? dashboard.departments
+    : departments;
   const [patients, setPatients] = useState<Patient[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -873,20 +883,57 @@ export default function DashboardClient({
           ))}
         </nav>
 
-        <section className="planned-modules" aria-labelledby="planned-modules-title">
-          <div className="nav-label" id="planned-modules-title">DEPARTMENTS</div>
-          <div className="planned-module-list">
-            {visibleDepartmentModules.map((module) => (
-              <button
-                className={`nav-item ${section === module.id ? "active" : ""}`}
-                key={module.id}
-                aria-current={section === module.id ? "page" : undefined}
-                onClick={() => setSection(module.id)}
-              >
-                <span className="nav-icon"><AppIcon name={module.icon} size={19} /></span>
-                <span>{module.label}</span>
-              </button>
-            ))}
+        <section className="sidebar-departments" aria-labelledby="sidebar-departments-title">
+          <div className="nav-label" id="sidebar-departments-title">DEPARTMENTS</div>
+          <div className="sidebar-department-list">
+            {canViewDepartmentQueues && sidebarDepartments.length > 0
+              ? sidebarDepartments.map((department) => {
+                  const module = departmentModules.find(
+                    (item) => item.departmentCode === department.code,
+                  );
+                  const destination =
+                    module &&
+                    canAccessDepartmentModule(
+                      module.id,
+                      staffRole,
+                      staffDepartmentCode,
+                    )
+                      ? module.id
+                      : "queue";
+                  return (
+                    <button
+                      className={`nav-item ${section === destination && (destination !== "queue" || queueDepartment === department.id) ? "active" : ""}`}
+                      key={department.id}
+                      aria-current={section === destination && (destination !== "queue" || queueDepartment === department.id) ? "page" : undefined}
+                      onClick={() => {
+                        setSelectedStaffId(null);
+                        if (destination === "queue") {
+                          setQueueDepartment(department.id);
+                        }
+                        setSection(destination);
+                      }}
+                    >
+                      <span className="nav-icon">
+                        <AppIcon name={module?.icon ?? "queue"} size={19} />
+                      </span>
+                      <span className="sidebar-department-copy">
+                        <span>{department.name}</span>
+                        <small>{department.code} department</small>
+                      </span>
+                    </button>
+                  );
+                })
+              : visibleDepartmentModules.map((module) => (
+                  <button
+                    className={`nav-item ${section === module.id ? "active" : ""}`}
+                    key={module.id}
+                    aria-current={section === module.id ? "page" : undefined}
+                    onClick={() => setSection(module.id)}
+                  >
+                    <span className="nav-icon"><AppIcon name={module.icon} size={19} /></span>
+                    <span>{module.label}</span>
+                  </button>
+                ))}
           </div>
         </section>
 
@@ -1057,6 +1104,7 @@ export default function DashboardClient({
               onSearch={setSearch}
               onToggleArchived={() => setShowArchivedPatients((value) => !value)}
               onRegister={() => setModal("patient")}
+              onImportComplete={() => void refresh()}
               canRegister={canRegisterPatients}
               canEdit={canManagePatientRecords}
               canCheckIn={canCheckInPatients}
@@ -1692,6 +1740,7 @@ function PatientsView({
   onSearch,
   onToggleArchived,
   onRegister,
+  onImportComplete,
   onView,
   onEdit,
   onArchive,
@@ -1707,6 +1756,7 @@ function PatientsView({
   onSearch: (value: string) => void;
   onToggleArchived: () => void;
   onRegister: () => void;
+  onImportComplete: () => void;
   onView: (patient: Patient) => void;
   onEdit: (patient: Patient) => void;
   onArchive: (patient: Patient) => void;
@@ -1744,6 +1794,33 @@ function PatientsView({
           canCheckIn={canCheckIn}
         />
       </section>
+      {canRegister && (
+        <SpreadsheetImport
+          endpoint="/patients/import"
+          title="Import patient records"
+          description="Create new patient records from a spreadsheet. Existing records are never overwritten."
+          templateName="patient-import-template.csv"
+          headers={[
+            "first_name",
+            "last_name",
+            "sex",
+            "date_of_birth",
+            "estimated_age",
+            "phone",
+            "alt_phone",
+            "email",
+            "national_id",
+            "address",
+            "next_of_kin_name",
+            "next_of_kin_relationship",
+            "next_of_kin_phone",
+            "usual_payment_method",
+            "allergies",
+            "sms_consent",
+          ]}
+          onImported={onImportComplete}
+        />
+      )}
     </>
   );
 }

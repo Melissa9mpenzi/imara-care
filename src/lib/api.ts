@@ -171,6 +171,26 @@ export interface MedicationStockItem {
   updated_at: string;
 }
 
+export interface SpreadsheetImportRow {
+  row: number;
+  display: string;
+  status: "ready" | "new" | "restock" | "created" | "restocked" | "imported" | "duplicate" | "invalid";
+  message: string;
+}
+
+export interface SpreadsheetImportResult {
+  preview: boolean;
+  total_rows: number;
+  created: number;
+  restocked?: number;
+  ready?: number;
+  new?: number;
+  restock?: number;
+  duplicates: number;
+  invalid: number;
+  rows: SpreadsheetImportRow[];
+}
+
 export interface DepartmentPatient {
   id: string;
   patient_number: string;
@@ -257,13 +277,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   let response: Response;
   try {
+    const headers = new Headers(init?.headers);
+    headers.set("Authorization", `Bearer ${authData.token}`);
+    if (init?.body instanceof FormData) {
+      headers.delete("Content-Type");
+    } else if (!headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
     response = await fetch(`${API_BASE}${path}`, {
       ...init,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${authData.token}`,
-        ...init?.headers,
-      },
+      headers,
       cache: "no-store",
     });
   } catch {
@@ -286,6 +309,8 @@ export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, payload: unknown) =>
     request<T>(path, { method: "POST", body: JSON.stringify(payload) }),
+  upload: <T>(path: string, payload: FormData) =>
+    request<T>(path, { method: "POST", body: payload }),
   patch: <T>(path: string, payload: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(payload) }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
