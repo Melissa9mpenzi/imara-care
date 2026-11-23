@@ -16,6 +16,14 @@ import type {
 
 export type DepartmentModule = "pharmacy" | "laboratory" | "billing" | "theatre";
 
+type DraftInvoiceLine = {
+  id: number;
+  description: string;
+  quantity: string;
+  unit: string;
+  unitPrice: string;
+};
+
 const moduleDepartment: Record<DepartmentModule, string> = {
   pharmacy: "PHARM",
   laboratory: "LAB",
@@ -38,8 +46,27 @@ function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-UG", {
     style: "currency",
     currency: "UGX",
-    maximumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(value);
+}
+
+function invoiceLineAmountCents(line: DraftInvoiceLine) {
+  const quantity = Number(line.quantity);
+  const unitPrice = Number(line.unitPrice);
+  if (!Number.isFinite(quantity) || !Number.isFinite(unitPrice) || quantity <= 0 || unitPrice <= 0) {
+    return 0;
+  }
+  const quantityHundredths = Math.round(quantity * 100);
+  const unitPriceCents = Math.round(unitPrice * 100);
+  return Math.floor((quantityHundredths * unitPriceCents) / 100 + 0.5);
+}
+
+function effectiveInvoiceStatus(invoice: BillingInvoice, today: string) {
+  const dueDate = invoice.billing_details?.due_date;
+  if (invoice.status !== "paid" && dueDate && dueDate < today && Number(invoice.balance) > 0) {
+    return "overdue";
+  }
+  return invoice.status;
 }
 
 function moduleManager(role: string, assignedDepartment: string | null, module: DepartmentModule) {
@@ -174,6 +201,64 @@ function PatientLabel({ patient }: { patient: DepartmentPatient }) {
   );
 }
 
+function InvoicePrintSheet({ invoice }: { invoice: BillingInvoice }) {
+  const details = invoice.billing_details;
+  return (
+    <article className="billing-print-sheet" aria-hidden="true">
+      <header className="billing-print-header">
+        <div><strong>IMARA-CARE</strong><span>Healthcare services</span></div>
+        <h1>Invoice</h1>
+      </header>
+      <div className="billing-print-summary">
+        <p><span>Invoice number</span><strong>{invoice.invoice_number}</strong></p>
+        <p><span>Issue date</span><strong>{new Date(invoice.created_at).toLocaleDateString()}</strong></p>
+        <p><span>Patient</span><strong>{patientName(invoice.patient)}</strong></p>
+        <p><span>Patient number</span><strong>{invoice.patient.patient_number}</strong></p>
+        <p><span>Bill to</span><strong>{details?.bill_to_name || patientName(invoice.patient)}</strong></p>
+        <p><span>Contact</span><strong>{details?.bill_to_phone || invoice.patient.phone || "—"}</strong></p>
+        <p><span>Payer</span><strong>{details?.payer_type.replaceAll("_", " ") || "—"}</strong></p>
+        {details?.insurer_name && <p><span>Insurer</span><strong>{details.insurer_name}</strong></p>}
+        {details?.payer_reference && <p><span>Payer reference</span><strong>{details.payer_reference}</strong></p>}
+        {details?.service_date && <p><span>Service date</span><strong>{details.service_date}</strong></p>}
+        {details?.due_date && <p><span>Due date</span><strong>{details.due_date}</strong></p>}
+      </div>
+      <table className="billing-print-items">
+        <thead><tr><th>Charge</th><th>Quantity</th><th>Unit price</th><th>Amount</th></tr></thead>
+        <tbody>
+          {invoice.items.length ? invoice.items.map((item) => (
+            <tr key={item.id}>
+              <td>{item.description}</td>
+              <td>{item.quantity} {item.unit}</td>
+              <td>{formatCurrency(Number(item.unit_price))}</td>
+              <td>{formatCurrency(Number(item.amount))}</td>
+            </tr>
+          )) : (
+            <tr><td>{invoice.description}</td><td>—</td><td>—</td><td>{formatCurrency(Number(invoice.total_amount))}</td></tr>
+          )}
+        </tbody>
+      </table>
+      <div className="billing-print-totals">
+        <p><span>Total</span><strong>{formatCurrency(Number(invoice.total_amount))}</strong></p>
+        <p><span>Paid</span><strong>{formatCurrency(Number(invoice.paid_amount))}</strong></p>
+        <p><span>Balance</span><strong>{formatCurrency(Number(invoice.balance))}</strong></p>
+      </div>
+      {details?.notes && <p className="billing-print-notes"><strong>Notes:</strong> {details.notes}</p>}
+      {invoice.payments.length > 0 && (
+        <section className="billing-print-payments">
+          <h2>Payments recorded</h2>
+          {invoice.payments.map((payment) => (
+            <p key={payment.id}>
+              {new Date(payment.paid_at).toLocaleDateString()} · {payment.method.replaceAll("_", " ")}
+              {payment.reference ? ` · Ref: ${payment.reference}` : ""}
+              <strong>{formatCurrency(Number(payment.amount))}</strong>
+            </p>
+          ))}
+        </section>
+      )}
+    </article>
+  );
+}
+
 function useAction(refresh: () => Promise<void>) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -269,12 +354,58 @@ export default function DepartmentWorkspace({
     ["admin", "facility_admin", "medical_director", "department_head", "billing"].includes(role);
   const canCreateClinicalOrder = manager || role === "clinician";
   const [selectedPatient, setSelectedPatient] = useState<DepartmentPatient | null>(null);
+  const [billToName, setBillToName] = useState("");
+  const [billToPhone, setBillToPhone] = useState("");
+  const [payerType, setPayerType] = useState<"self_pay" | "insurance" | "other">("self_pay");
+  const [invoiceLines, setInvoiceLines] = useState<DraftInvoiceLine[]>([
+    { id: 0, description: "", quantity: "1", unit: "service", unitPrice: "" },
+  ]);
+  const [nextInvoiceLineId, setNextInvoiceLineId] = useState(1);
+  const [invoiceSearch, setInvoiceSearch] = useState("");
+  const [invoiceStatusFilter, setInvoiceStatusFilter] = useState<
+    "all" | "unpaid" | "partially_paid" | "paid" | "overdue"
+  >("all");
+  const [printInvoiceId, setPrintInvoiceId] = useState<string | null>(null);
+  const invoiceToPrint = invoices.find((invoice) => invoice.id === printInvoiceId);
+  const currentDate = new Date();
+  const today = [
+    currentDate.getFullYear(),
+    String(currentDate.getMonth() + 1).padStart(2, "0"),
+    String(currentDate.getDate()).padStart(2, "0"),
+  ].join("-");
+  const visibleInvoices = invoices.filter((invoice) => {
+    const status = effectiveInvoiceStatus(invoice, today);
+    if (invoiceStatusFilter !== "all" && status !== invoiceStatusFilter) return false;
+    const search = invoiceSearch.trim().toLowerCase();
+    if (!search) return true;
+    return [
+      invoice.invoice_number,
+      invoice.description,
+      patientName(invoice.patient),
+      invoice.patient.patient_number,
+      invoice.patient.phone ?? "",
+      invoice.billing_details?.insurer_name ?? "",
+      ...invoice.items.map((item) => item.description),
+    ].some((value) => value.toLowerCase().includes(search));
+  });
+
+  useEffect(() => {
+    if (!invoiceToPrint) return;
+    const timer = window.setTimeout(() => window.print(), 100);
+    const finishPrint = () => setPrintInvoiceId(null);
+    window.addEventListener("afterprint", finishPrint);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("afterprint", finishPrint);
+    };
+  }, [invoiceToPrint]);
 
   async function submit(
     event: FormEvent<HTMLFormElement>,
     create: (form: FormData) => Promise<unknown>,
     message: string,
     requiresPatient = true,
+    onSuccess?: () => void,
   ) {
     event.preventDefault();
     const formElement = event.currentTarget;
@@ -290,6 +421,7 @@ export default function DepartmentWorkspace({
       formElement.reset();
       setSelectedPatient(null);
       setPatientPickerVersion((version) => version + 1);
+      onSuccess?.();
     }, message);
   }
 
@@ -586,77 +718,194 @@ export default function DepartmentWorkspace({
         <>
           <section className="billing-overview">
             <div className="billing-metric">
-              <span>Invoices</span>
+              <span>Recent invoices</span>
               <strong>{invoices.length}</strong>
             </div>
             <div className="billing-metric">
-              <span>Collected</span>
+              <span>Collected (recent)</span>
               <strong>{formatCurrency(invoices.reduce((sum, invoice) => sum + Number(invoice.paid_amount), 0))}</strong>
             </div>
             <div className="billing-metric">
-              <span>Outstanding balance</span>
+              <span>Outstanding (recent)</span>
               <strong>{formatCurrency(invoices.reduce((sum, invoice) => sum + Number(invoice.balance), 0))}</strong>
             </div>
           </section>
           <section className="billing-guide" aria-label="Billing workflow">
             <strong>How billing works</strong>
             <ol>
-              <li>Billing staff create an invoice for a registered patient and enter each charge in its description.</li>
+              <li>Billing staff select a registered patient, review the prefilled bill-to contact, and add itemized charges.</li>
               <li>Billing staff or cashiers record cash, insurance, mobile money, or bank-transfer payments against that invoice.</li>
-              <li>Partial payments reduce the balance. The invoice is marked paid when the recorded total reaches the invoice total.</li>
+              <li>Partial payments reduce the balance. Staff can search invoices, review their details, and print an invoice.</li>
             </ol>
             <p>
-              Record the payment reference where available and reconcile cash or
-              electronic payments against the facility&apos;s own finance records.
-              This MVP does not process insurer claims, tax, refunds, or accounting
-              exports.
+              Record payment references where available and reconcile payments
+              against the facility&apos;s finance records. Insurance details can be
+              recorded, but this workflow does not submit insurer claims or
+              calculate tax, refunds, or accounting exports.
             </p>
           </section>
           {canIssueInvoice && (
             <section className="panel department-panel">
-              <div className="panel-heading"><h3>Create invoice</h3></div>
-              <form className="department-form" onSubmit={(event) => void submit(
+              <div className="panel-heading">
+                <div><h3>Create invoice</h3><span>Itemize each service, medicine, or other charge.</span></div>
+              </div>
+              <form className="department-form billing-invoice-form" onSubmit={(event) => void submit(
                 event,
-                (form) => api.post("/billing/invoices", {
-                  patient_id: selectedPatient?.id,
-                  description: form.get("description"),
-                  total_amount: form.get("total_amount"),
-                }),
+                (form) => {
+                  const descriptions = invoiceLines.map((line) => line.description.trim());
+                  return api.post("/billing/invoices", {
+                    patient_id: selectedPatient?.id,
+                    description: descriptions.length === 1
+                      ? descriptions[0]
+                      : `${descriptions[0]} + ${descriptions.length - 1} more`,
+                    items: invoiceLines.map((line) => ({
+                      description: line.description.trim(),
+                      quantity: Number(line.quantity),
+                      unit: line.unit.trim(),
+                      unit_price: Number(line.unitPrice),
+                    })),
+                    bill_to_name: form.get("bill_to_name"),
+                    bill_to_phone: form.get("bill_to_phone") || null,
+                    payer_type: form.get("payer_type"),
+                    insurer_name: form.get("insurer_name") || null,
+                    payer_reference: form.get("payer_reference") || null,
+                    service_date: form.get("service_date") || null,
+                    due_date: form.get("due_date") || null,
+                    notes: form.get("notes") || null,
+                  });
+                },
                 "Invoice created.",
+                true,
+                () => {
+                  setBillToName("");
+                  setBillToPhone("");
+                  setPayerType("self_pay");
+                  setInvoiceLines([{ id: 0, description: "", quantity: "1", unit: "service", unitPrice: "" }]);
+                  setNextInvoiceLineId(1);
+                },
               )}>
-                <PatientPicker key={patientPickerVersion} departmentCode={moduleDepartment[module]} onSelect={setSelectedPatient} />
-                <label>Charge description<input name="description" maxLength={240} required /></label>
-                <label>Amount<input name="total_amount" type="number" min="0.01" step="0.01" required /></label>
-                <button className="button button-primary" type="submit" disabled={action.busy}>Create invoice</button>
+                <PatientPicker
+                  key={patientPickerVersion}
+                  departmentCode={moduleDepartment[module]}
+                  onSelect={(patient) => {
+                    setSelectedPatient(patient);
+                    setBillToName(patient ? patientName(patient) : "");
+                    setBillToPhone(patient?.phone ?? "");
+                  }}
+                />
+                <div className="billing-patient-summary" aria-live="polite">
+                  <p><span>Patient number</span><strong>{selectedPatient?.patient_number || "Select a patient"}</strong></p>
+                  <p><span>Patient phone</span><strong>{selectedPatient?.phone || "No phone on record"}</strong></p>
+                </div>
+                <div className="billing-form-section billing-bill-to">
+                  <h4>Bill-to details</h4>
+                  <div className="billing-form-grid">
+                    <label>Bill-to name<input name="bill_to_name" maxLength={160} value={billToName} onChange={(event) => setBillToName(event.target.value)} required /></label>
+                    <label>Bill-to phone<input name="bill_to_phone" type="tel" maxLength={32} value={billToPhone} onChange={(event) => setBillToPhone(event.target.value)} /></label>
+                    <label>Payer type
+                      <select name="payer_type" value={payerType} onChange={(event) => setPayerType(event.target.value as typeof payerType)}>
+                        <option value="self_pay">Self-pay</option>
+                        <option value="insurance">Insurance</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </label>
+                    {payerType === "insurance" && (
+                      <>
+                        <label>Insurer name<input name="insurer_name" maxLength={160} required /></label>
+                        <label>Member / payer reference<input name="payer_reference" maxLength={80} /></label>
+                      </>
+                    )}
+                    <label>Service date<input name="service_date" type="date" /></label>
+                    <label>Due date<input name="due_date" type="date" /></label>
+                  </div>
+                </div>
+                <div className="billing-form-section billing-charge-section">
+                  <div className="billing-charge-heading">
+                    <div><h4>Itemized charges</h4><p>Enter a quantity and unit price for each line.</p></div>
+                    <button className="button button-quiet" type="button" onClick={() => {
+                      setInvoiceLines((lines) => [...lines, {
+                        id: nextInvoiceLineId,
+                        description: "",
+                        quantity: "1",
+                        unit: "service",
+                        unitPrice: "",
+                      }]);
+                      setNextInvoiceLineId((id) => id + 1);
+                    }} disabled={invoiceLines.length >= 50}>Add charge</button>
+                  </div>
+                  <div className="billing-line-items">
+                    {invoiceLines.map((line, index) => (
+                      <div className="billing-line-row" key={line.id}>
+                        <label>Charge description<input value={line.description} onChange={(event) => setInvoiceLines((lines) => lines.map((item) => item.id === line.id ? { ...item, description: event.target.value } : item))} maxLength={240} required /></label>
+                        <label>Quantity<input value={line.quantity} onChange={(event) => setInvoiceLines((lines) => lines.map((item) => item.id === line.id ? { ...item, quantity: event.target.value } : item))} type="number" min="0.01" max="1000000" step="0.01" required /></label>
+                        <label>Unit<input value={line.unit} onChange={(event) => setInvoiceLines((lines) => lines.map((item) => item.id === line.id ? { ...item, unit: event.target.value } : item))} maxLength={40} placeholder="service, item, day…" required /></label>
+                        <label>Unit price (UGX)<input value={line.unitPrice} onChange={(event) => setInvoiceLines((lines) => lines.map((item) => item.id === line.id ? { ...item, unitPrice: event.target.value } : item))} type="number" min="0.01" step="0.01" required /></label>
+                        <div className="billing-line-total"><span>Line total</span><strong>{formatCurrency(invoiceLineAmountCents(line) / 100)}</strong></div>
+                        <button className="text-button billing-remove-line" type="button" onClick={() => setInvoiceLines((lines) => lines.filter((item) => item.id !== line.id))} disabled={invoiceLines.length === 1} aria-label={`Remove charge ${index + 1}`}>Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="billing-invoice-total">
+                    <span>Invoice total</span>
+                    <strong>{formatCurrency(invoiceLines.reduce((sum, line) => sum + invoiceLineAmountCents(line), 0) / 100)}</strong>
+                  </div>
+                </div>
+                <label className="billing-invoice-notes">Invoice notes<textarea name="notes" maxLength={2000} rows={3} placeholder="Optional notes for the billing record" /></label>
+                <button className="button button-primary billing-submit" type="submit" disabled={action.busy}>Create invoice</button>
               </form>
             </section>
           )}
           <section className="panel department-panel">
-            <div className="panel-heading"><h3>Invoices & payments</h3><span>{invoices.length} recent</span></div>
+            <div className="panel-heading">
+              <h3>Invoices & payments</h3>
+              <span>{visibleInvoices.length} shown · {invoices.length} recent</span>
+            </div>
+            <div className="billing-invoice-filters">
+              <label>Search invoices
+                <input value={invoiceSearch} onChange={(event) => setInvoiceSearch(event.target.value)} placeholder="Invoice, patient, phone, or insurer" />
+              </label>
+              <label>Invoice status
+                <select value={invoiceStatusFilter} onChange={(event) => setInvoiceStatusFilter(event.target.value as typeof invoiceStatusFilter)}>
+                  <option value="all">All statuses</option>
+                  <option value="unpaid">Unpaid</option>
+                  <option value="partially_paid">Partially paid</option>
+                  <option value="overdue">Overdue</option>
+                  <option value="paid">Paid</option>
+                </select>
+              </label>
+            </div>
             <div className="department-table-wrap">
               <table className="department-table">
-                <thead><tr><th>Invoice / patient</th><th>Description</th><th>Total</th><th>Paid / balance</th><th>Status</th>{manager && <th>Record payment</th>}<th>Payment history</th></tr></thead>
+                <thead><tr><th>Invoice / patient</th><th>Charges</th><th>Payer / due</th><th>Total</th><th>Paid / balance</th><th>Status</th>{manager && <th>Record payment</th>}<th>Invoice details</th><th>Payments</th></tr></thead>
                 <tbody>
-                  {invoices.map((invoice) => (
+                  {visibleInvoices.map((invoice) => {
+                    const details = invoice.billing_details;
+                    const status = effectiveInvoiceStatus(invoice, today);
+                    return (
                     <tr key={invoice.id}>
                       <td><strong>{invoice.invoice_number}</strong><PatientLabel patient={invoice.patient} /></td>
-                      <td>{invoice.description}</td>
-                      <td>{invoice.total_amount}</td>
-                      <td>{invoice.paid_amount} paid<small>Balance: {invoice.balance}</small></td>
-                      <td><span className={`department-status ${invoice.status === "paid" ? "status-done" : "status-pending"}`}>{invoice.status.replaceAll("_", " ")}</span></td>
+                      <td>{invoice.description}<small>{invoice.items.length} charge{invoice.items.length === 1 ? "" : "s"}</small></td>
+                      <td>{details?.payer_type.replaceAll("_", " ") || "—"}{details?.insurer_name && <small>{details.insurer_name}</small>}{details?.due_date && <small>Due {details.due_date}</small>}</td>
+                      <td>{formatCurrency(Number(invoice.total_amount))}</td>
+                      <td>{formatCurrency(Number(invoice.paid_amount))} paid<small>Balance: {formatCurrency(Number(invoice.balance))}</small></td>
+                      <td><span className={`department-status ${status === "paid" ? "status-done" : status === "overdue" || status === "partially_paid" ? "status-warning" : "status-pending"}`}>{status.replaceAll("_", " ")}</span></td>
                       {manager && <td>{invoice.status !== "paid" ? (
                         <form className="department-inline-form" onSubmit={(event) => {
                           event.preventDefault();
+                          const formElement = event.currentTarget;
                           const form = new FormData(event.currentTarget);
                           void action.run(
-                            () => api.post(`/billing/invoices/${invoice.id}/payments`, {
-                              amount: form.get("amount"),
-                              method: form.get("method"),
-                              reference: form.get("reference") || null,
-                            }),
+                            async () => {
+                              const result = await api.post(`/billing/invoices/${invoice.id}/payments`, {
+                                amount: form.get("amount"),
+                                method: form.get("method"),
+                                reference: form.get("reference") || null,
+                              });
+                              formElement.reset();
+                              return result;
+                            },
                             "Payment recorded.",
                           );
-                          event.currentTarget.reset();
                         }}>
                           <input name="amount" type="number" min="0.01" max={invoice.balance} step="0.01" placeholder="Amount" required />
                           <select name="method" aria-label="Payment method" defaultValue="cash"><option value="cash">Cash</option><option value="insurance">Insurance</option><option value="mobile_money">Mobile money</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select>
@@ -664,6 +913,27 @@ export default function DepartmentWorkspace({
                           <button className="button button-quiet" type="submit" disabled={action.busy}>Record</button>
                         </form>
                       ) : "—"}</td>}
+                      <td>
+                        <details className="billing-invoice-details">
+                          <summary>View / print</summary>
+                          <div className="billing-invoice-detail-body">
+                            <p><span>Bill to</span><strong>{details?.bill_to_name || patientName(invoice.patient)}</strong></p>
+                            <p><span>Contact</span><strong>{details?.bill_to_phone || invoice.patient.phone || "—"}</strong></p>
+                            {details?.payer_reference && <p><span>Payer reference</span><strong>{details.payer_reference}</strong></p>}
+                            {details?.service_date && <p><span>Service date</span><strong>{details.service_date}</strong></p>}
+                            {details?.notes && <p><span>Notes</span><strong>{details.notes}</strong></p>}
+                            <ul className="billing-invoice-lines">
+                              {invoice.items.length ? invoice.items.map((item) => (
+                                <li key={item.id}>
+                                  <span>{item.description}<small>{item.quantity} {item.unit} × {formatCurrency(Number(item.unit_price))}</small></span>
+                                  <strong>{formatCurrency(Number(item.amount))}</strong>
+                                </li>
+                              )) : <li><span>{invoice.description}</span><strong>{formatCurrency(Number(invoice.total_amount))}</strong></li>}
+                            </ul>
+                            <button className="button button-quiet" type="button" onClick={() => setPrintInvoiceId(invoice.id)}>Print invoice</button>
+                          </div>
+                        </details>
+                      </td>
                       <td>
                         <details className="billing-payment-history">
                           <summary>Payment history ({invoice.payments.length})</summary>
@@ -681,12 +951,13 @@ export default function DepartmentWorkspace({
                         </details>
                       </td>
                     </tr>
-                  ))}
-                  {!invoices.length && <tr><td colSpan={manager ? 7 : 6} className="department-empty">No invoices yet.</td></tr>}
+                  )})}
+                  {!visibleInvoices.length && <tr><td colSpan={manager ? 9 : 8} className="department-empty">{invoices.length ? "No invoices match these filters." : "No invoices yet."}</td></tr>}
                 </tbody>
               </table>
             </div>
           </section>
+          {invoiceToPrint && <InvoicePrintSheet invoice={invoiceToPrint} />}
         </>
       )}
 

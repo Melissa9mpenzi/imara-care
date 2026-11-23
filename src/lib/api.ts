@@ -243,6 +243,24 @@ export interface BillingInvoice {
   invoice_number: string;
   patient: DepartmentPatient;
   description: string;
+  items: {
+    id: string;
+    description: string;
+    unit: string;
+    quantity: string;
+    unit_price: string;
+    amount: string;
+  }[];
+  billing_details: {
+    bill_to_name: string | null;
+    bill_to_phone: string | null;
+    payer_type: "self_pay" | "insurance" | "other";
+    insurer_name: string | null;
+    payer_reference: string | null;
+    service_date: string | null;
+    due_date: string | null;
+    notes: string | null;
+  } | null;
   total_amount: string;
   paid_amount: string;
   balance: string;
