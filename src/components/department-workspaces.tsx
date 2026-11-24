@@ -452,9 +452,89 @@ export default function DepartmentWorkspace({
       )}
       {action.success && <div className="alert alert-success" role="status">{action.success}</div>}
 
+      <div className="department-overview-layout" aria-label={`${moduleTitles[module]} overview`}>
+        <div className="department-kpi-grid">
+          {module === "pharmacy" && (
+            <>
+              <article className="department-kpi"><span>Medicine items</span><strong>{stock.length}</strong><small>Active stock records</small></article>
+              <article className="department-kpi"><span>Low stock</span><strong>{stock.filter((item) => item.low_stock).length}</strong><small>At or below reorder level</small></article>
+              <article className="department-kpi"><span>Pending orders</span><strong>{medicationOrders.filter((order) => order.status === "requested").length}</strong><small>Awaiting dispensing</small></article>
+              <article className="department-kpi"><span>Available units</span><strong>{stock.reduce((sum, item) => sum + item.quantity_on_hand, 0)}</strong><small>Across active medicines</small></article>
+            </>
+          )}
+          {module === "laboratory" && (
+            <>
+              <article className="department-kpi"><span>Total orders</span><strong>{laboratoryOrders.length}</strong><small>Recent test activity</small></article>
+              <article className="department-kpi"><span>Pending</span><strong>{laboratoryOrders.filter((order) => order.status === "requested").length}</strong><small>Awaiting results</small></article>
+              <article className="department-kpi"><span>Priority tests</span><strong>{laboratoryOrders.filter((order) => order.priority !== "routine").length}</strong><small>Urgent or emergency</small></article>
+              <article className="department-kpi"><span>Resulted</span><strong>{laboratoryOrders.filter((order) => order.status === "resulted").length}</strong><small>Completed results</small></article>
+            </>
+          )}
+          {module === "billing" && (
+            <>
+              <article className="department-kpi"><span>Recent invoices</span><strong>{invoices.length}</strong><small>Invoice records</small></article>
+              <article className="department-kpi"><span>Collected</span><strong>{formatCurrency(invoices.reduce((sum, invoice) => sum + Number(invoice.paid_amount), 0))}</strong><small>Recent payments</small></article>
+              <article className="department-kpi"><span>Outstanding</span><strong>{formatCurrency(invoices.reduce((sum, invoice) => sum + Number(invoice.balance), 0))}</strong><small>Unpaid balances</small></article>
+              <article className="department-kpi"><span>Paid invoices</span><strong>{invoices.filter((invoice) => invoice.status === "paid").length}</strong><small>Fully settled</small></article>
+            </>
+          )}
+          {module === "theatre" && (
+            <>
+              <article className="department-kpi"><span>Procedures</span><strong>{procedures.length}</strong><small>Recent schedule</small></article>
+              <article className="department-kpi"><span>Scheduled</span><strong>{procedures.filter((procedure) => procedure.status === "scheduled").length}</strong><small>Upcoming work</small></article>
+              <article className="department-kpi"><span>In progress</span><strong>{procedures.filter((procedure) => procedure.status === "in_progress").length}</strong><small>Active procedures</small></article>
+              <article className="department-kpi"><span>Completed</span><strong>{procedures.filter((procedure) => procedure.status === "completed").length}</strong><small>Completed procedures</small></article>
+            </>
+          )}
+        </div>
+        <section className="panel department-overview-actions">
+          <div className="panel-heading"><h3>Actions</h3><span>Jump to a workflow</span></div>
+          <div className="department-action-grid">
+            {module === "pharmacy" && manager && <button type="button" onClick={() => document.querySelector("#pharmacy-add-stock")?.scrollIntoView({ behavior: "smooth" })}><strong>Add stock</strong><small>Create one medicine record</small></button>}
+            {module === "pharmacy" && manager && <button type="button" onClick={() => document.querySelector("#pharmacy-stock")?.scrollIntoView({ behavior: "smooth" })}><strong>Edit / receive stock</strong><small>Update inventory and balances</small></button>}
+            {module === "pharmacy" && canCreateClinicalOrder && <button type="button" onClick={() => document.querySelector("#pharmacy-orders")?.scrollIntoView({ behavior: "smooth" })}><strong>Medication orders</strong><small>Create or dispense orders</small></button>}
+            {module === "laboratory" && canCreateClinicalOrder && <button type="button" onClick={() => document.querySelector("#laboratory-create")?.scrollIntoView({ behavior: "smooth" })}><strong>Request test</strong><small>Create a laboratory order</small></button>}
+            {module === "laboratory" && <button type="button" onClick={() => document.querySelector("#laboratory-orders")?.scrollIntoView({ behavior: "smooth" })}><strong>Test results</strong><small>Review tests and record results</small></button>}
+            {module === "billing" && canIssueInvoice && <button type="button" onClick={() => document.querySelector("#billing-create")?.scrollIntoView({ behavior: "smooth" })}><strong>Create invoice</strong><small>Itemize charges for a patient</small></button>}
+            {module === "billing" && <button type="button" onClick={() => document.querySelector("#billing-invoices")?.scrollIntoView({ behavior: "smooth" })}><strong>Invoices & payments</strong><small>Review balances and payments</small></button>}
+            {module === "theatre" && canCreateClinicalOrder && <button type="button" onClick={() => document.querySelector("#theatre-create")?.scrollIntoView({ behavior: "smooth" })}><strong>Schedule procedure</strong><small>Create a theatre appointment</small></button>}
+            {module === "theatre" && <button type="button" onClick={() => document.querySelector("#theatre-schedule")?.scrollIntoView({ behavior: "smooth" })}><strong>Procedure schedule</strong><small>Review and update procedures</small></button>}
+          </div>
+        </section>
+        <section className="panel department-chart-panel">
+          <div className="panel-heading"><h3>Operational status</h3><span>Current split</span></div>
+          <div className="department-chart-bars">
+            {module === "pharmacy" && (
+              <>
+                <div><span>Low stock</span><div><i style={{ width: `${stock.length ? stock.filter((item) => item.low_stock).length / stock.length * 100 : 0}%` }} /></div><strong>{stock.filter((item) => item.low_stock).length}</strong></div>
+                <div><span>In stock</span><div><i style={{ width: `${stock.length ? stock.filter((item) => !item.low_stock).length / stock.length * 100 : 0}%` }} /></div><strong>{stock.filter((item) => !item.low_stock).length}</strong></div>
+              </>
+            )}
+            {module === "laboratory" && (
+              <>
+                <div><span>Pending</span><div><i style={{ width: `${laboratoryOrders.length ? laboratoryOrders.filter((order) => order.status === "requested").length / laboratoryOrders.length * 100 : 0}%` }} /></div><strong>{laboratoryOrders.filter((order) => order.status === "requested").length}</strong></div>
+                <div><span>Resulted</span><div><i style={{ width: `${laboratoryOrders.length ? laboratoryOrders.filter((order) => order.status === "resulted").length / laboratoryOrders.length * 100 : 0}%` }} /></div><strong>{laboratoryOrders.filter((order) => order.status === "resulted").length}</strong></div>
+              </>
+            )}
+            {module === "billing" && (
+              <>
+                <div><span>Collected</span><div><i style={{ width: "100%" }} /></div><strong>{formatCurrency(invoices.reduce((sum, invoice) => sum + Number(invoice.paid_amount), 0))}</strong></div>
+                <div><span>Outstanding</span><div><i style={{ width: "100%" }} /></div><strong>{formatCurrency(invoices.reduce((sum, invoice) => sum + Number(invoice.balance), 0))}</strong></div>
+              </>
+            )}
+            {module === "theatre" && (
+              <>
+                <div><span>Scheduled</span><div><i style={{ width: `${procedures.length ? procedures.filter((procedure) => procedure.status === "scheduled").length / procedures.length * 100 : 0}%` }} /></div><strong>{procedures.filter((procedure) => procedure.status === "scheduled").length}</strong></div>
+                <div><span>Completed</span><div><i style={{ width: `${procedures.length ? procedures.filter((procedure) => procedure.status === "completed").length / procedures.length * 100 : 0}%` }} /></div><strong>{procedures.filter((procedure) => procedure.status === "completed").length}</strong></div>
+              </>
+            )}
+          </div>
+        </section>
+      </div>
+
       {role === "department_head" && (
         <div className="department-head-overview">
-          <section className="panel department-panel">
+          <section className="panel department-panel" id="pharmacy-add-stock">
             <div className="panel-heading">
               <div><h3>Patients linked to this department</h3><span>{departmentPatients.length} shown</span></div>
             </div>
@@ -475,7 +555,7 @@ export default function DepartmentWorkspace({
               </table>
             </div>
           </section>
-          <section className="panel department-panel">
+          <section className="panel department-panel" id="pharmacy-stock">
             <div className="panel-heading">
               <div><h3>Department queue</h3><span>{departmentQueue.length} entries</span></div>
             </div>
@@ -552,7 +632,7 @@ export default function DepartmentWorkspace({
             />
           )}
           {canCreateClinicalOrder && (
-            <section className="panel department-panel">
+            <section className="panel department-panel" id="pharmacy-orders">
               <div className="panel-heading"><h3>Create medication order</h3></div>
               <form className="department-form" onSubmit={(event) => void submit(
                 event,
@@ -656,7 +736,7 @@ export default function DepartmentWorkspace({
       {module === "laboratory" && (
         <>
           {canCreateClinicalOrder && (
-            <section className="panel department-panel">
+            <section className="panel department-panel" id="laboratory-create">
               <div className="panel-heading"><h3>Request a laboratory test</h3></div>
               <form className="department-form" onSubmit={(event) => void submit(
                 event,
@@ -678,7 +758,7 @@ export default function DepartmentWorkspace({
               </form>
             </section>
           )}
-          <section className="panel department-panel">
+          <section className="panel department-panel" id="laboratory-orders">
             <div className="panel-heading"><h3>Test orders & results</h3><span>{laboratoryOrders.length} recent</span></div>
             <div className="department-table-wrap">
               <table className="department-table">
@@ -745,7 +825,7 @@ export default function DepartmentWorkspace({
             </p>
           </section>
           {canIssueInvoice && (
-            <section className="panel department-panel">
+            <section className="panel department-panel" id="billing-create">
               <div className="panel-heading">
                 <div><h3>Create invoice</h3><span>Itemize each service, medicine, or other charge.</span></div>
               </div>
@@ -855,7 +935,7 @@ export default function DepartmentWorkspace({
               </form>
             </section>
           )}
-          <section className="panel department-panel">
+          <section className="panel department-panel" id="billing-invoices">
             <div className="panel-heading">
               <h3>Invoices & payments</h3>
               <span>{visibleInvoices.length} shown · {invoices.length} recent</span>
@@ -964,7 +1044,7 @@ export default function DepartmentWorkspace({
       {module === "theatre" && (
         <>
           {canCreateClinicalOrder && (
-            <section className="panel department-panel">
+            <section className="panel department-panel" id="theatre-create">
               <div className="panel-heading"><h3>Schedule a procedure</h3></div>
               <form className="department-form" onSubmit={(event) => void submit(
                 event,
@@ -989,7 +1069,7 @@ export default function DepartmentWorkspace({
               </form>
             </section>
           )}
-          <section className="panel department-panel">
+          <section className="panel department-panel" id="theatre-schedule">
             <div className="panel-heading"><h3>Procedure schedule</h3><span>{procedures.length} recent</span></div>
             <div className="department-table-wrap">
               <table className="department-table">

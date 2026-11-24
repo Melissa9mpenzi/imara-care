@@ -1565,6 +1565,84 @@ h1 { font-size: clamp(27px, 2.4vw, 34px); }
   margin: 0;
 }
 
+.department-overview-layout {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1.4fr) minmax(260px, .8fr);
+}
+.department-kpi-grid {
+  display: grid;
+  gap: 12px;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.department-kpi,
+.department-overview-actions,
+.department-chart-panel {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.department-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 16px;
+}
+.department-kpi span,
+.department-kpi small { color: var(--text-muted); font-size: 12px; }
+.department-kpi strong { color: var(--secondary); font-size: 24px; }
+.department-action-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 14px;
+}
+.department-action-grid button {
+  align-items: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-height: 72px;
+  padding: 12px;
+  text-align: left;
+}
+.department-action-grid button:hover { background: var(--primary-wash); border-color: var(--primary); }
+.department-action-grid strong { color: var(--secondary); font-size: 13px; }
+.department-action-grid small { color: var(--text-muted); line-height: 1.35; }
+.department-chart-bars {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+.department-chart-bars > div {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 90px minmax(80px, 1fr) auto;
+}
+.department-chart-bars > div > span { color: var(--text-muted); font-size: 12px; }
+.department-chart-bars > div > div { background: var(--surface); border-radius: 999px; height: 8px; overflow: hidden; }
+.department-chart-bars i { background: var(--primary); border-radius: 999px; display: block; height: 100%; }
+.department-chart-bars strong { color: var(--secondary); font-size: 12px; }
+
+@media (max-width: 900px) {
+  .department-overview-layout { grid-template-columns: 1fr; }
+  .department-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 680px) {
+  .department-kpi-grid,
+  .department-action-grid { grid-template-columns: 1fr; }
+  .department-kpi { padding: 14px; }
+  .department-chart-bars > div { grid-template-columns: 76px minmax(60px, 1fr) auto; }
+}
+
 .department-panel {
   overflow: hidden;
 }
