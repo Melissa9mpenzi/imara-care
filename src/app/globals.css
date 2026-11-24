@@ -666,7 +666,7 @@ h2 { color: #233832; font-size: 14px; margin: 0; }
   min-height: 50px;
   width: 100%;
 }
-.google-sign-in-button > span { align-items: center; border: 1px solid #dce5e9; border-radius: 50%; color: #4285f4; display: inline-flex; font-size: 15px; font-weight: 700; height: 24px; justify-content: center; width: 24px; }
+.google-sign-in-icon { display: block; flex: 0 0 18px; height: 18px; width: 18px; }
 .google-sign-in-button:hover:not(:disabled) { background: #f7fafb; }
 .google-sign-in-button:focus-visible { box-shadow: var(--focus-ring); outline: none; }
 .google-sign-in-button:disabled { cursor: wait; opacity: .7; }
