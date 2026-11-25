@@ -18,9 +18,14 @@ export const authDatabase = new Pool({
 
 let supportTablesReady: Promise<void> | undefined;
 
-export function ensureAuthSupportTables() {
-  supportTablesReady ??= authDatabase
-    .query(`
+async function createAuthSupportTables() {
+  const client = await authDatabase.connect();
+  let discardClient = false;
+  try {
+    await client.query("BEGIN");
+    // Serialize schema setup across separate serverless instances.
+    await client.query("SELECT pg_advisory_xact_lock(1380334401, 1)");
+    await client.query(`
       CREATE TABLE IF NOT EXISTS staff_invitations (
         id TEXT PRIMARY KEY,
         token_hash TEXT NOT NULL UNIQUE,
@@ -73,8 +78,26 @@ export function ensureAuthSupportTables() {
         code TEXT NOT NULL,
         expires_at TEXT NOT NULL
       );
-    `)
-    .then(() => undefined);
+    `);
+    await client.query("COMMIT");
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      discardClient = true;
+      console.error("Failed to roll back auth support-table setup.", rollbackError);
+    }
+    throw error;
+  } finally {
+    client.release(discardClient);
+  }
+}
+
+export function ensureAuthSupportTables() {
+  supportTablesReady ??= createAuthSupportTables().catch((error) => {
+    supportTablesReady = undefined;
+    throw error;
+  });
   return supportTablesReady;
 }
 
