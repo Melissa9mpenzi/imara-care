@@ -7,6 +7,7 @@
     "prebuild": "prisma generate && node scripts/prepare-auth-schema.mjs",
     "build": "next build",
     "start": "next start",
+    "smoke:api": "node scripts/smoke-api.mjs",
     "typecheck": "tsc --noEmit",
     "auth:setup": "node scripts/setup-auth.mjs",
     "auth:migrate": "npx auth@1.7.15 migrate --yes",

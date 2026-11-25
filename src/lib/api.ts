@@ -1,7 +1,9 @@
 import { authClient } from "@/lib/auth-client";
 
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+  process.env.NODE_ENV === "production"
+    ? "https://imara-care-api.vercel.app/api/v1"
+    : process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 
 export interface Department {
   id: string;
@@ -318,7 +320,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       typeof detail === "string"
         ? detail
         : detail?.message ?? "The request could not be completed.";
-    throw new Error(message);
+    throw new Error(`${message} (HTTP ${response.status} at ${path.split("?")[0]})`);
   }
   return body as T;
 }

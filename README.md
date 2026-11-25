@@ -18,11 +18,13 @@ npm run auth:migrate
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The API URL can be overridden in `.env.local`:
+Open [http://localhost:3000](http://localhost:3000). For local development, the API URL can be overridden in `.env.local`:
 
 ```text
 NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
 ```
+
+Production builds use `https://imara-care-api.vercel.app/api/v1` so the deployed dashboard stays pointed at the confirmed API. `NEXT_PUBLIC_API_URL` only affects local development.
 
 `auth:setup` creates a private `.env.local` with a random Better Auth secret and local settings. It does not overwrite existing values. Set `AUTH_DATABASE_URL` to a PostgreSQL connection for the `auth` schema before running `auth:migrate`. For an existing SQLite auth database, run `npm run auth:migrate:sqlite-to-postgres` after the schema migration and before starting Next.js; do not run `auth:create-admin`, because migration preserves existing accounts. For a new installation with no SQLite accounts, run `npm run auth:create-admin -- --email admin@example.com --name "Platform Administrator" --role admin` after the schema migration. Facility administrators can open **Staff directory** as a dashboard tab to view facility accounts and open a full-page staff profile without leaving the dashboard sidebar, or use **Invite staff** to issue a 48-hour invitation. Staff can open **Help & support** from the sidebar for common task guidance, email `melissampenzi@gmail.com`, or submit a support request; facility administrators can review and update requests. The support form explicitly prohibits patient identifiers, clinical details, passwords, and MFA codes. In local development, the one-time invitation URL is shown to the signed-in administrator; set the `SMTP_*` values in `.env.local` to deliver invitations by email. Passwords are Argon2id-hashed, checked against the Pwned Passwords range API using its k-anonymity protocol, and staff account creation requires a valid invitation.
 
@@ -61,6 +63,9 @@ The original authentication SQLite database and its migration backups, along wit
 ```powershell
 npm run typecheck
 npm run build
+npm run smoke:api
 ```
+
+The API smoke check verifies the public health endpoint and confirms Pharmacy and Theatre routes are registered. Set `API_AUTH_TOKEN` to additionally check those routes with an authenticated staff token; use `API_BASE_URL` to check a different API deployment.
 
 This is a development/demo MVP, not a production-ready clinical system. Staff authentication includes invite-only password enrollment, administrator-issued invitations, email or username sign-in, optional Google OAuth, facility-scoped API sessions, account lockout, password reset, and authenticator-app MFA with email OTP and recovery-code options for sensitive staff roles. API role permissions are enforced for facility, reception, records, clinical, nursing, and department workflows; nurses and department heads are scoped to their assigned department. Passkeys, multi-facility host resolution, production email delivery, and a full clinical security and compliance review are still required before real patient data is used.
