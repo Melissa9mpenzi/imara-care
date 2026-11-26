@@ -96,6 +96,28 @@ export interface Appointment {
   department: Pick<Department, "id" | "name">;
 }
 
+export interface AuditEvent {
+  id: string;
+  actor: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ReminderJobStatus {
+  last_run: {
+    status: "running" | "succeeded" | "failed";
+    started_at: string;
+    finished_at: string | null;
+    processed: number;
+    error: string | null;
+  } | null;
+  stale_after_seconds: number;
+  stale: boolean;
+}
+
 export interface DashboardData {
   facility_name: string;
   date: string;
@@ -166,10 +188,19 @@ export interface MedicationStockItem {
   form: string;
   unit: string;
   quantity_on_hand: number;
+  available_quantity: number;
+  expired_quantity: number;
+  untracked_quantity: number;
   reorder_level: number;
   unit_price: string;
   low_stock: boolean;
   active: boolean;
+  batches: {
+    batch_number: string;
+    expires_on: string;
+    quantity_remaining: number;
+    expired: boolean;
+  }[];
   updated_at: string;
 }
 
@@ -237,6 +268,12 @@ export interface LaboratoryOrder {
   clinical_notes: string | null;
   status: string;
   result: string | null;
+  sample_status: "awaiting_collection" | "collected" | "processing" | "resulted" | "rejected";
+  sample_collected_at: string | null;
+  review_status: "not_ready" | "awaiting_review" | "reviewed";
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_notes: string | null;
   created_at: string;
 }
 
@@ -272,10 +309,28 @@ export interface BillingInvoice {
     amount: string;
     method: string;
     reference: string | null;
+    receipt_number: string | null;
     recorded_by: string;
     paid_at: string;
   }[];
+  insurance_claim: InsuranceClaim | null;
   created_at: string;
+}
+
+export interface InsuranceClaim {
+  id: string;
+  claim_number: string;
+  status: "draft" | "submitted" | "approved" | "denied" | "paid";
+  insurer_name: string | null;
+  payer_reference: string | null;
+  external_claim_reference: string | null;
+  notes: string | null;
+  created_by: string;
+  updated_by: string | null;
+  submitted_at: string | null;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface TheatreProcedure {

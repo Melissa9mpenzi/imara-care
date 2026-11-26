@@ -1,6 +1,6 @@
 # IMARA-CARE Web
 
-The Next.js frontend for IMARA-CARE, a hospital management system. This MVP provides a responsive facility dashboard, patient registration and search, appointment scheduling, visit check-in, triage, and department queues.
+The Next.js frontend for IMARA-CARE, a hospital management system. This MVP provides a responsive facility dashboard, patient registration and search, appointment scheduling, visit check-in, triage and audited Pharmacy/Laboratory handoffs, role-based department workspaces, and audit history.
 
 ## Requirements
 
@@ -34,7 +34,7 @@ For local development only, set `LOCAL_AUTH_MAILBOX=true` in `.env.local` to use
 
 Staff can sign in with their email or username. New staff choose a username when accepting their invitation; existing staff can set one once in **My security**. Google sign-in is optional: configure `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env.local` or the deployment environment, then register `https://<your-auth-domain>/api/auth/callback/google` as the Google OAuth redirect URI. Google sign-in is restricted to existing accounts with a locally verified matching email; it cannot create staff accounts. Staff with MFA enabled still complete the IMARA-CARE second step after Google sign-in.
 
-Reception and records staff can import new patient records from CSV or `.xlsx` in the Patients tab. Download the header-only CSV template, fill it with patient details, upload it, and review the preview before importing; possible duplicates and invalid rows are skipped, and existing patient records are never changed. Pharmacy staff can import stock from the Pharmacy workspace using the same preview-first flow. A receipt reference is required, and matching inventory items require explicit confirmation before their quantities are added. Both uploads are limited to 5 MB and 500 rows; lot and expiry tracking are not included.
+Reception and records staff can import new patient records from CSV or `.xlsx` in the Patients tab. Download the header-only CSV template, fill it with patient details, upload it, and review the preview before importing; possible duplicates and invalid rows are skipped, and existing patient records are never changed. Pharmacy staff can import stock from the Pharmacy workspace using the same preview-first flow. Positive stock quantities require a batch number, expiry date of today or later, and receipt reference; matching inventory items require explicit confirmation before quantities are added. Expired and legacy untracked quantities are not dispensable, and eligible batches are consumed earliest-expiry-first. Both uploads are limited to 5 MB and 500 rows.
 
 ## PostgreSQL
 

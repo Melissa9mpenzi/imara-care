@@ -17,6 +17,7 @@ import type { FacilityStaffMember } from "@/lib/staff-directory";
 import type {
   AppNotification,
   Appointment,
+  AuditEvent,
   DashboardData,
   Department,
   Patient,
@@ -24,14 +25,15 @@ import type {
   PatientProfile,
   QueueItem,
   Reminder,
+  ReminderJobStatus,
 } from "@/lib/api";
 
-type Section = "overview" | "patients" | "appointments" | "queue" | "reminders" | "notifications" | "staff" | "support" | DepartmentModule;
+type Section = "overview" | "patients" | "appointments" | "queue" | "reminders" | "notifications" | "staff" | "support" | "audit" | DepartmentModule;
 type Modal = "patient" | "patient-edit" | "patient-detail" | "profile" | "appointment" | "checkin" | "triage" | "reminder" | null;
 const staffNavigation: Record<string, Section[]> = {
-  admin: ["overview", "patients", "appointments", "queue", "support", "staff"],
-  facility_admin: ["overview", "patients", "appointments", "queue", "support", "staff"],
-  medical_director: ["overview", "patients", "appointments", "queue", "support"],
+  admin: ["overview", "patients", "appointments", "queue", "support", "staff", "audit"],
+  facility_admin: ["overview", "patients", "appointments", "queue", "support", "staff", "audit"],
+  medical_director: ["overview", "patients", "appointments", "queue", "support", "audit"],
   reception: ["overview", "patients", "appointments", "queue", "support"],
   records: ["patients", "support"],
   clinician: ["overview", "patients", "appointments", "queue", "support"],
@@ -70,6 +72,7 @@ const navigation: { id: Section; label: string; icon: IconName; managerOnly?: bo
   { id: "queue", label: "Queue & triage", icon: "queue" },
   { id: "support", label: "Help & support", icon: "support" },
   { id: "staff", label: "Staff directory", icon: "staff", managerOnly: true },
+  { id: "audit", label: "Audit history", icon: "security", managerOnly: true },
 ];
 
 const sectionLabels: Record<Section, string> = {
@@ -81,6 +84,7 @@ const sectionLabels: Record<Section, string> = {
   notifications: "Notifications",
   staff: "Staff directory",
   support: "Help & support",
+  audit: "Audit history",
   pharmacy: "Pharmacy",
   laboratory: "Laboratory",
   billing: "Billing & insurance",
@@ -294,8 +298,10 @@ export default function DashboardClient({
   const canViewDepartmentQueues = staffNavigation[staffRole]?.includes("queue") ?? false;
   const canInviteStaff =
     session?.user.role === "admin" || staffRole === "facility_admin";
+  const canViewAudit = ["admin", "facility_admin", "medical_director"].includes(staffRole);
   const visibleNavigation =
     navigation.filter((item) => {
+      if (item.id === "audit") return canViewAudit && staffNavigation[staffRole]?.includes(item.id);
       if (item.managerOnly) return canInviteStaff && staffNavigation[staffRole]?.includes(item.id);
       return staffNavigation[staffRole]?.includes(item.id) ?? false;
     });
@@ -315,6 +321,7 @@ export default function DashboardClient({
   const canBookAppointments = ["admin", "facility_admin", "medical_director", "reception"].includes(staffRole);
   const canCallPatients = ["admin", "facility_admin", "medical_director", "nurse", "clinician"].includes(staffRole);
   const canTriagePatients = ["admin", "facility_admin", "medical_director", "nurse", "clinician"].includes(staffRole);
+  const canHandoffVisits = ["admin", "facility_admin", "medical_director", "reception", "nurse", "clinician"].includes(staffRole);
   const isNurse = staffRole === "nurse";
   const isRecordsStaff = staffRole === "records";
   const [section, setSection] = useState<Section>(initialSection);
@@ -393,7 +400,7 @@ export default function DashboardClient({
         const queueData = await api.get<QueueItem[]>(
           `/queues?status=all&department_id=${encodeURIComponent(assignedDepartment.id)}`,
         );
-        setDepartments([assignedDepartment]);
+        setDepartments(facilityData.departments);
         setQueue(queueData);
         setQueueDepartment(assignedDepartment.id);
         setFacilityTimezone(facilityData.timezone);
@@ -716,6 +723,25 @@ export default function DashboardClient({
       await refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not call the patient.");
+    }
+  }
+
+  async function handoffPatient(
+    item: QueueItem,
+    targetDepartmentCode: "PHARM" | "LAB",
+    reason: string,
+  ): Promise<boolean> {
+    try {
+      await api.post(`/visits/${item.visit_id}/handoff`, {
+        target_department_code: targetDepartmentCode,
+        reason,
+      });
+      setSuccess(`${item.patient.first_name} was sent to ${targetDepartmentCode === "LAB" ? "Laboratory" : "Pharmacy"}.`);
+      await refresh();
+      return true;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not hand off this visit.");
+      return false;
     }
   }
 
@@ -1086,6 +1112,7 @@ export default function DashboardClient({
               canRegister={canRegisterPatients}
               canCall={canCallPatients}
               canTriage={canTriagePatients}
+              canViewOperations={canViewAudit}
               onBook={() => setModal("appointment")}
               onRegister={() => setModal("patient")}
               onCall={callPatient}
@@ -1138,13 +1165,16 @@ export default function DashboardClient({
               onCall={callPatient}
               canCall={canCallPatients}
               canTriage={canTriagePatients}
+              canHandoff={canHandoffVisits}
               canSelectDepartment={!isNurse}
+              onHandoff={handoffPatient}
               onTriage={(item) => {
                 setSelectedVisit(item);
                 setModal("triage");
               }}
             />
           )}
+          {canViewAudit && section === "audit" && <AuditHistoryView />}
           {!departmentOnlyRole && !isNurse && !isRecordsStaff && section === "reminders" && (
             <RemindersView
               reminders={reminders}
@@ -1395,6 +1425,7 @@ function Overview({
   canRegister,
   canCall,
   canTriage,
+  canViewOperations,
 }: {
   todayLabel: string;
   greeting: string;
@@ -1411,6 +1442,7 @@ function Overview({
   canRegister: boolean;
   canCall: boolean;
   canTriage: boolean;
+  canViewOperations: boolean;
 }) {
   const stats = dashboard?.stats;
   const nextAppointments = appointments
@@ -1440,6 +1472,8 @@ function Overview({
         <StatCard label="Waiting now" value={stats?.waiting_now ?? 0} note="Across all departments" icon="clock" color="orange" />
         <StatCard label="Appointments" value={stats?.appointments_today ?? 0} note="Scheduled for today" icon="appointments" color="purple" />
       </div>
+
+      {canViewOperations && <ReminderJobHealth />}
 
       <div className="section-title-row overview-section-heading">
         <div><h2>Facility overview</h2><p>A live look at patient flow and today&apos;s schedule</p></div>
@@ -1509,6 +1543,66 @@ function Overview({
         </section>
       </div>
     </>
+  );
+}
+
+function ReminderJobHealth() {
+  const [status, setStatus] = useState<ReminderJobStatus | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    const refresh = () => {
+      api.get<ReminderJobStatus>("/operations/reminders")
+        .then((result) => {
+          if (active) {
+            setStatus(result);
+            setError("");
+          }
+        })
+        .catch((reason: unknown) => {
+          if (active) {
+            setError(reason instanceof Error ? reason.message : "Reminder job status could not be loaded.");
+          }
+        });
+    };
+    refresh();
+    const interval = window.setInterval(refresh, 60_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  const lastRun = status?.last_run;
+  const warning = status?.stale ?? false;
+  return (
+    <section className="panel reminder-health-panel" aria-live="polite">
+      <div className="panel-heading">
+        <div>
+          <h3>Reminder scheduler</h3>
+          <span className="panel-subtitle">Job heartbeat · refreshes every minute</span>
+        </div>
+        {status && <span className={`status-pill ${warning ? "status-cancelled" : "status-confirmed"}`}>{warning ? "Needs attention" : "Healthy"}</span>}
+      </div>
+      {error ? <div className="alert alert-error">{error}</div> : !status ? (
+        <p className="panel-subtitle">Checking the latest scheduler run…</p>
+      ) : warning ? (
+        <p className="alert alert-error">
+          {lastRun?.status === "failed"
+            ? `The last reminder run failed${lastRun.error ? ` (${lastRun.error})` : ""}.`
+            : lastRun?.status === "running"
+              ? "The latest reminder run has not finished."
+              : "No successful reminder run was recorded in the last five minutes. Configure a worker or scheduled trigger."}
+        </p>
+      ) : (
+        <p className="panel-subtitle">
+          {lastRun?.finished_at
+            ? `Last successful run: ${new Date(lastRun.finished_at).toLocaleString()} · ${lastRun.processed} reminders processed.`
+            : "No completed reminder run is available."}
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -1909,7 +2003,40 @@ function AppointmentsView({ appointments, onBook, onUpdate, canBook, canUpdate }
   );
 }
 
-function QueueView({ items, departments, department, onDepartmentChange, onCall, onTriage, canCall, canTriage, canSelectDepartment }: { items: QueueItem[]; departments: Department[]; department: string; onDepartmentChange: (value: string) => void; onCall: (item: QueueItem) => void; onTriage: (item: QueueItem) => void; canCall: boolean; canTriage: boolean; canSelectDepartment: boolean }) {
+function QueueView({ items, departments, department, onDepartmentChange, onCall, onTriage, onHandoff, canCall, canTriage, canHandoff, canSelectDepartment }: { items: QueueItem[]; departments: Department[]; department: string; onDepartmentChange: (value: string) => void; onCall: (item: QueueItem) => void; onTriage: (item: QueueItem) => void; onHandoff: (item: QueueItem, targetDepartmentCode: "PHARM" | "LAB", reason: string) => Promise<boolean>; canCall: boolean; canTriage: boolean; canHandoff: boolean; canSelectDepartment: boolean }) {
+  const [handoffVisitId, setHandoffVisitId] = useState<string | null>(null);
+  const [handoffSaving, setHandoffSaving] = useState(false);
+  const [handoffError, setHandoffError] = useState("");
+  const handoffDepartments = departments.filter(
+    (item) => item.code === "PHARM" || item.code === "LAB",
+  );
+
+  async function submitHandoff(
+    event: FormEvent<HTMLFormElement>,
+    item: QueueItem,
+  ) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const targetDepartmentCode = String(formData.get("target_department_code"));
+    const reason = String(formData.get("reason") ?? "").trim();
+    if (
+      (targetDepartmentCode !== "PHARM" && targetDepartmentCode !== "LAB") ||
+      !reason
+    ) {
+      setHandoffError("Choose a destination and enter a reason.");
+      return;
+    }
+    setHandoffSaving(true);
+    setHandoffError("");
+    try {
+      const succeeded = await onHandoff(item, targetDepartmentCode, reason);
+      if (succeeded) setHandoffVisitId(null);
+      else setHandoffError("The handoff could not be completed.");
+    } finally {
+      setHandoffSaving(false);
+    }
+  }
+
   return (
     <>
       <div className="page-heading">
@@ -1929,11 +2056,76 @@ function QueueView({ items, departments, department, onDepartmentChange, onCall,
             <div className="queue-reason"><strong>{item.reason}</strong><span>{item.department.name}</span></div>
             <div className={`priority-label priority-text-${item.priority}`}><i />{item.priority}</div>
             <div className="queue-arrival">{Math.max(0, Math.floor((Date.now() - new Date(item.arrived_at).getTime()) / 60000))} min<span>waiting</span></div>
-            <div className="schedule-actions">{canTriage && <button className="small-outline" onClick={() => onTriage(item)}>{item.triage ? "Edit triage" : "Triage"}</button>}{canCall && item.status === "waiting" && <button className="small-primary" onClick={() => onCall(item)}>Call patient</button>}</div>
+            <div className="schedule-actions">
+              {canTriage && <button className="small-outline" onClick={() => onTriage(item)}>{item.triage ? "Edit triage" : "Triage"}</button>}
+              {canCall && item.status === "waiting" && <button className="small-primary" onClick={() => onCall(item)}>Call patient</button>}
+              {canHandoff && handoffDepartments.some((target) => target.code !== item.department.code) && (
+                handoffVisitId === item.visit_id ? (
+                  <form className="queue-handoff-form" onSubmit={(event) => void submitHandoff(event, item)}>
+                    <select name="target_department_code" aria-label="Handoff destination" defaultValue={handoffDepartments.find((target) => target.code !== item.department.code)?.code} required>
+                      {handoffDepartments.filter((target) => target.code !== item.department.code).map((target) => <option key={target.id} value={target.code}>{target.name}</option>)}
+                    </select>
+                    <input name="reason" aria-label="Handoff reason" placeholder="Reason for handoff" maxLength={240} required />
+                    <button className="small-primary" type="submit" disabled={handoffSaving}>{handoffSaving ? "Sending…" : "Send"}</button>
+                    <button className="small-outline" type="button" onClick={() => { setHandoffVisitId(null); setHandoffError(""); }}>Cancel</button>
+                    {handoffError && <span className="queue-handoff-error">{handoffError}</span>}
+                  </form>
+                ) : (
+                  <button className="small-outline" onClick={() => { setHandoffVisitId(item.visit_id); setHandoffError(""); }}>Handoff</button>
+                )
+              )}
+            </div>
           </div>
         ))}
       </section>
       <div className="queue-footnote"><span className="connection-dot" /> Queue refreshes automatically. Emergency and urgent visits are prioritised.</div>
+    </>
+  );
+}
+
+function AuditHistoryView() {
+  const [events, setEvents] = useState<AuditEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    api.get<AuditEvent[]>("/audit?limit=100")
+      .then((result) => {
+        if (active) setEvents(result);
+      })
+      .catch((reason: unknown) => {
+        if (active) setError(reason instanceof Error ? reason.message : "Audit history could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return (
+    <>
+      <div className="page-heading">
+        <div><div className="eyebrow">OPERATIONS &amp; PRIVACY</div><h1>Audit history</h1><p>Read-only record of sensitive workflow changes.</p></div>
+      </div>
+      {error && <div className="alert alert-error">{error}</div>}
+      <section className="panel directory-panel">
+        <div className="directory-toolbar">
+          <div><h3 className="toolbar-title">Recent activity</h3><span className="panel-subtitle">Most recent changes first · privileged leadership roles</span></div>
+          <span className="result-count">{events.length} events</span>
+        </div>
+        {loading ? <EmptyState title="Loading audit history" detail="Retrieving recent activity." /> : !events.length ? (
+          <EmptyState title="No audit events yet" detail="Sensitive workflow changes will appear here." />
+        ) : events.map((event) => (
+          <article className="audit-event-row" key={event.id}>
+            <div><strong>{event.action.replaceAll(".", " ").replaceAll("_", " ")}</strong><span>{event.entity_type} · {event.entity_id}</span></div>
+            <div><strong>{event.actor}</strong><span>{new Date(event.created_at).toLocaleString()}</span></div>
+            <small>{Object.entries(event.details).map(([key, value]) => `${key.replaceAll("_", " ")}: ${typeof value === "string" ? value : JSON.stringify(value)}`).join(" · ") || "No additional details"}</small>
+          </article>
+        ))}
+      </section>
     </>
   );
 }

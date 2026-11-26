@@ -249,12 +249,46 @@ function InvoicePrintSheet({ invoice }: { invoice: BillingInvoice }) {
           {invoice.payments.map((payment) => (
             <p key={payment.id}>
               {new Date(payment.paid_at).toLocaleDateString()} · {payment.method.replaceAll("_", " ")}
+              {payment.receipt_number ? ` · Receipt ${payment.receipt_number}` : ""}
               {payment.reference ? ` · Ref: ${payment.reference}` : ""}
               <strong>{formatCurrency(Number(payment.amount))}</strong>
             </p>
           ))}
         </section>
       )}
+    </article>
+  );
+}
+
+function PaymentReceiptSheet({
+  invoice,
+  payment,
+}: {
+  invoice: BillingInvoice;
+  payment: BillingInvoice["payments"][number];
+}) {
+  const details = invoice.billing_details;
+  return (
+    <article className="billing-print-sheet" aria-hidden="true">
+      <header className="billing-print-header">
+        <div><strong>IMARA-CARE</strong><span>Healthcare services</span></div>
+        <h1>Payment receipt</h1>
+      </header>
+      <div className="billing-print-summary">
+        <p><span>Receipt number</span><strong>{payment.receipt_number || "Unavailable"}</strong></p>
+        <p><span>Payment date</span><strong>{new Date(payment.paid_at).toLocaleString()}</strong></p>
+        <p><span>Patient</span><strong>{patientName(invoice.patient)}</strong></p>
+        <p><span>Patient number</span><strong>{invoice.patient.patient_number}</strong></p>
+        <p><span>Invoice</span><strong>{invoice.invoice_number}</strong></p>
+        <p><span>Bill to</span><strong>{details?.bill_to_name || patientName(invoice.patient)}</strong></p>
+        <p><span>Payment method</span><strong>{payment.method.replaceAll("_", " ")}</strong></p>
+        {payment.reference && <p><span>Payment reference</span><strong>{payment.reference}</strong></p>}
+      </div>
+      <div className="billing-print-totals">
+        <p><span>Payment received</span><strong>{formatCurrency(Number(payment.amount))}</strong></p>
+        <p><span>Invoice total</span><strong>{formatCurrency(Number(invoice.total_amount))}</strong></p>
+        <p><span>Remaining balance</span><strong>{formatCurrency(Number(invoice.balance))}</strong></p>
+      </div>
     </article>
   );
 }
@@ -322,18 +356,21 @@ export default function DepartmentWorkspace({
       } else {
         setProcedures(await api.get<TheatreProcedure[]>("/theatre/procedures"));
       }
+      const code = moduleDepartment[module];
+      const queueRequest = api.get<DepartmentQueueEntry[]>(
+        `/departments/queues?department_code=${code}&status=all`,
+      );
       if (role === "department_head") {
-        const code = moduleDepartment[module];
         const [patients, queue] = await Promise.all([
           api.get<DepartmentPatient[]>(
             `/departments/patients?department_code=${code}&limit=50`,
           ),
-          api.get<DepartmentQueueEntry[]>(
-            `/departments/queues?department_code=${code}&status=all`,
-          ),
+          queueRequest,
         ]);
         setDepartmentPatients(patients);
         setDepartmentQueue(queue);
+      } else {
+        setDepartmentQueue(await queueRequest);
       }
     } catch (reason) {
       setLoadError(reason instanceof Error ? reason.message : "Department data could not be loaded.");
@@ -346,8 +383,35 @@ export default function DepartmentWorkspace({
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    let active = true;
+    const pollQueue = async () => {
+      try {
+        const queue = await api.get<DepartmentQueueEntry[]>(
+          `/departments/queues?department_code=${moduleDepartment[module]}&status=all`,
+        );
+        if (active) setDepartmentQueue(queue);
+      } catch (reason) {
+        if (active) {
+          setLoadError(reason instanceof Error ? reason.message : "Department queue could not be refreshed.");
+        }
+      }
+    };
+    const timer = window.setInterval(() => void pollQueue(), 15000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [module]);
+
   const action = useAction(refresh);
   const manager = moduleManager(role, departmentCode, module);
+  const activeDepartmentQueue = departmentQueue.filter(
+    (entry) => entry.status === "waiting" || entry.status === "in_service",
+  );
+  const canReviewLabResult =
+    module === "laboratory" &&
+    ["clinician", "admin", "facility_admin", "medical_director"].includes(role);
   const canIssueInvoice =
     module === "billing" &&
     manager &&
@@ -367,6 +431,14 @@ export default function DepartmentWorkspace({
   >("all");
   const [printInvoiceId, setPrintInvoiceId] = useState<string | null>(null);
   const invoiceToPrint = invoices.find((invoice) => invoice.id === printInvoiceId);
+  const [printReceipt, setPrintReceipt] = useState<{
+    invoiceId: string;
+    paymentId: string;
+  } | null>(null);
+  const receiptInvoice = invoices.find((invoice) => invoice.id === printReceipt?.invoiceId);
+  const receiptPayment = receiptInvoice?.payments.find(
+    (payment) => payment.id === printReceipt?.paymentId,
+  );
   const currentDate = new Date();
   const today = [
     currentDate.getFullYear(),
@@ -390,15 +462,18 @@ export default function DepartmentWorkspace({
   });
 
   useEffect(() => {
-    if (!invoiceToPrint) return;
+    if (!invoiceToPrint && !receiptPayment) return;
     const timer = window.setTimeout(() => window.print(), 100);
-    const finishPrint = () => setPrintInvoiceId(null);
+    const finishPrint = () => {
+      setPrintInvoiceId(null);
+      setPrintReceipt(null);
+    };
     window.addEventListener("afterprint", finishPrint);
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener("afterprint", finishPrint);
     };
-  }, [invoiceToPrint]);
+  }, [invoiceToPrint, receiptPayment]);
 
   async function submit(
     event: FormEvent<HTMLFormElement>,
@@ -459,15 +534,15 @@ export default function DepartmentWorkspace({
               <article className="department-kpi"><span>Medicine items</span><strong>{stock.length}</strong><small>Active stock records</small></article>
               <article className="department-kpi"><span>Low stock</span><strong>{stock.filter((item) => item.low_stock).length}</strong><small>At or below reorder level</small></article>
               <article className="department-kpi"><span>Pending orders</span><strong>{medicationOrders.filter((order) => order.status === "requested").length}</strong><small>Awaiting dispensing</small></article>
-              <article className="department-kpi"><span>Available units</span><strong>{stock.reduce((sum, item) => sum + item.quantity_on_hand, 0)}</strong><small>Across active medicines</small></article>
+              <article className="department-kpi"><span>Available units</span><strong>{stock.reduce((sum, item) => sum + item.available_quantity, 0)}</strong><small>Unexpired, batch-tracked stock</small></article>
             </>
           )}
           {module === "laboratory" && (
             <>
               <article className="department-kpi"><span>Total orders</span><strong>{laboratoryOrders.length}</strong><small>Recent test activity</small></article>
-              <article className="department-kpi"><span>Pending</span><strong>{laboratoryOrders.filter((order) => order.status === "requested").length}</strong><small>Awaiting results</small></article>
+              <article className="department-kpi"><span>Awaiting collection</span><strong>{laboratoryOrders.filter((order) => order.sample_status === "awaiting_collection").length}</strong><small>Samples not yet collected</small></article>
               <article className="department-kpi"><span>Priority tests</span><strong>{laboratoryOrders.filter((order) => order.priority !== "routine").length}</strong><small>Urgent or emergency</small></article>
-              <article className="department-kpi"><span>Resulted</span><strong>{laboratoryOrders.filter((order) => order.status === "resulted").length}</strong><small>Completed results</small></article>
+              <article className="department-kpi"><span>Awaiting review</span><strong>{laboratoryOrders.filter((order) => order.review_status === "awaiting_review").length}</strong><small>Results need clinician review</small></article>
             </>
           )}
           {module === "billing" && (
@@ -512,8 +587,8 @@ export default function DepartmentWorkspace({
             )}
             {module === "laboratory" && (
               <>
-                <div><span>Pending</span><div><i style={{ width: `${laboratoryOrders.length ? laboratoryOrders.filter((order) => order.status === "requested").length / laboratoryOrders.length * 100 : 0}%` }} /></div><strong>{laboratoryOrders.filter((order) => order.status === "requested").length}</strong></div>
-                <div><span>Resulted</span><div><i style={{ width: `${laboratoryOrders.length ? laboratoryOrders.filter((order) => order.status === "resulted").length / laboratoryOrders.length * 100 : 0}%` }} /></div><strong>{laboratoryOrders.filter((order) => order.status === "resulted").length}</strong></div>
+                <div><span>Awaiting collection</span><div><i style={{ width: `${laboratoryOrders.length ? laboratoryOrders.filter((order) => order.sample_status === "awaiting_collection").length / laboratoryOrders.length * 100 : 0}%` }} /></div><strong>{laboratoryOrders.filter((order) => order.sample_status === "awaiting_collection").length}</strong></div>
+                <div><span>Awaiting review</span><div><i style={{ width: `${laboratoryOrders.length ? laboratoryOrders.filter((order) => order.review_status === "awaiting_review").length / laboratoryOrders.length * 100 : 0}%` }} /></div><strong>{laboratoryOrders.filter((order) => order.review_status === "awaiting_review").length}</strong></div>
               </>
             )}
             {module === "billing" && (
@@ -555,31 +630,32 @@ export default function DepartmentWorkspace({
               </table>
             </div>
           </section>
-          <section className="panel department-panel" id="pharmacy-stock">
-            <div className="panel-heading">
-              <div><h3>Department queue</h3><span>{departmentQueue.length} entries</span></div>
-            </div>
-            <div className="department-table-wrap">
-              <table className="department-table">
-                <thead><tr><th>Queue</th><th>Patient</th><th>Reason</th><th>Priority / status</th></tr></thead>
-                <tbody>
-                  {departmentQueue.map((entry) => (
-                    <tr key={entry.id}>
-                      <td><strong>{entry.queue_number}</strong></td>
-                      <td><PatientLabel patient={entry.patient} /></td>
-                      <td>{entry.reason}</td>
-                      <td><span className={`department-status ${entry.priority === "emergency" ? "status-warning" : "status-pending"}`}>{entry.priority}</span><small>{entry.status.replaceAll("_", " ")}</small></td>
-                    </tr>
-                  ))}
-                  {!departmentQueue.length && (
-                    <tr><td colSpan={4} className="department-empty">No queue entries for this department.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
         </div>
       )}
+
+      <section className="panel department-panel department-queue-panel" id="department-queue">
+        <div className="panel-heading">
+          <div><h3>Department queue</h3><span>{activeDepartmentQueue.length} open entries · refreshes every 15 seconds</span></div>
+        </div>
+        <div className="department-table-wrap">
+          <table className="department-table">
+            <thead><tr><th>Queue</th><th>Patient</th><th>Reason</th><th>Priority / status</th></tr></thead>
+            <tbody>
+              {activeDepartmentQueue.map((entry) => (
+                <tr key={entry.id}>
+                  <td><strong>{entry.queue_number}</strong></td>
+                  <td><PatientLabel patient={entry.patient} /></td>
+                  <td>{entry.reason}</td>
+                  <td><span className={`department-status ${entry.priority === "emergency" ? "status-warning" : "status-pending"}`}>{entry.priority}</span><small>{entry.status.replaceAll("_", " ")}</small></td>
+                </tr>
+              ))}
+              {!activeDepartmentQueue.length && (
+                <tr><td colSpan={4} className="department-empty">No queue entries for this department.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       {module === "pharmacy" && (
         <>
@@ -596,6 +672,9 @@ export default function DepartmentWorkspace({
                   quantity_on_hand: Number(form.get("quantity_on_hand")),
                   reorder_level: Number(form.get("reorder_level")),
                   unit_price: form.get("unit_price"),
+                  batch_number: form.get("batch_number"),
+                  expires_on: form.get("expires_on"),
+                  reference: form.get("reference"),
                 }),
                 "Medicine stock item added.",
                 false,
@@ -604,7 +683,10 @@ export default function DepartmentWorkspace({
                 <label>Strength<input name="strength" maxLength={80} placeholder="e.g. 500 mg" required /></label>
                 <label>Form<input name="form" maxLength={80} placeholder="e.g. tablet" required /></label>
                 <label>Stock unit<input name="unit" maxLength={40} placeholder="e.g. tablet" required /></label>
-                <label>Opening quantity<input name="quantity_on_hand" type="number" min="0" defaultValue="0" required /></label>
+                <label>Opening quantity<input name="quantity_on_hand" type="number" min="1" defaultValue="1" required /></label>
+                <label>Batch number<input name="batch_number" maxLength={100} required /></label>
+                <label>Expiry date<input name="expires_on" type="date" min={today} required /></label>
+                <label>Receipt reference<input name="reference" maxLength={240} placeholder="Supplier invoice or delivery note" required /></label>
                 <label>Reorder at<input name="reorder_level" type="number" min="0" defaultValue="0" required /></label>
                 <label>Unit price<input name="unit_price" type="number" min="0" step="0.01" defaultValue="0" required /></label>
                 <button className="button button-primary" type="submit" disabled={action.busy}>Add stock item</button>
@@ -625,6 +707,8 @@ export default function DepartmentWorkspace({
                 "quantity_on_hand",
                 "reorder_level",
                 "unit_price",
+                "batch_number",
+                "expires_on",
               ]}
               requireReference
               confirmRestock
@@ -652,18 +736,23 @@ export default function DepartmentWorkspace({
                   <select name="stock_item_id" required defaultValue="">
                     <option value="" disabled>Select medicine</option>
                     {stock.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name} {item.strength} · {item.quantity_on_hand} {item.unit} available
+                      <option key={item.id} value={item.id} disabled={item.available_quantity < 1}>
+                        {item.name} {item.strength} · {item.available_quantity} {item.unit} available
                       </option>
                     ))}
                   </select>
                 </label>
+                {!stock.some((item) => item.available_quantity > 0) && (
+                  <p className="department-hint">
+                    No unexpired, batch-tracked stock is available. Record a valid batch and expiry date before ordering.
+                  </p>
+                )}
                 <label>Dosage<input name="dosage" maxLength={160} placeholder="e.g. 1 tablet" required /></label>
                 <label>Frequency<input name="frequency" maxLength={160} placeholder="e.g. twice daily" required /></label>
                 <label>Duration<input name="duration" maxLength={100} placeholder="e.g. 5 days" /></label>
                 <label>Quantity<input name="quantity" type="number" min="1" required /></label>
                 <label>Instructions<input name="instructions" maxLength={2000} /></label>
-                <button className="button button-primary" type="submit" disabled={action.busy || stock.length === 0}>
+                <button className="button button-primary" type="submit" disabled={action.busy || !stock.some((item) => item.available_quantity > 0)}>
                   Create order
                 </button>
               </form>
@@ -673,12 +762,21 @@ export default function DepartmentWorkspace({
             <div className="panel-heading"><h3>Medicine stock</h3><span>{stock.length} items</span></div>
             <div className="department-table-wrap">
               <table className="department-table">
-                <thead><tr><th>Medicine</th><th>Available</th><th>Unit price</th><th>Stock</th>{manager && <th>Receive</th>}</tr></thead>
+                <thead><tr><th>Medicine</th><th>Available</th><th>Batch / expiry</th><th>Unit price</th><th>Stock</th>{manager && <th>Receive</th>}</tr></thead>
                 <tbody>
                   {stock.map((item) => (
                     <tr key={item.id}>
                       <td><strong>{item.name}</strong><small>{item.strength} · {item.form}</small></td>
-                      <td>{item.quantity_on_hand} {item.unit}</td>
+                      <td>{item.available_quantity} {item.unit}<small>{item.quantity_on_hand} total on hand</small></td>
+                      <td>
+                        {item.batches.length ? item.batches.map((batch) => (
+                          <small key={`${batch.batch_number}-${batch.expires_on}`}>
+                            {batch.batch_number} · expires {batch.expires_on}
+                            {batch.expired ? " · EXPIRED" : ` · ${batch.quantity_remaining} left`}
+                          </small>
+                        )) : "No batch recorded"}
+                        {item.untracked_quantity > 0 && <small>{item.untracked_quantity} untracked; unavailable for dispensing</small>}
+                      </td>
                       <td>{item.unit_price}</td>
                       <td><span className={`department-status ${item.low_stock ? "status-warning" : "status-done"}`}>{item.low_stock ? "Low" : "In stock"}</span></td>
                       {manager && <td>
@@ -688,19 +786,24 @@ export default function DepartmentWorkspace({
                           void action.run(
                             () => api.post(`/pharmacy/stock/${item.id}/receive`, {
                               quantity: Number(form.get("quantity")),
-                              reference: form.get("reference") || null,
+                              batch_number: form.get("batch_number"),
+                              expires_on: form.get("expires_on"),
+                              reference: form.get("reference"),
                             }),
                             "Stock received.",
                           );
                           event.currentTarget.reset();
                         }}>
                           <input aria-label={`Quantity received for ${item.name}`} name="quantity" type="number" min="1" placeholder="Qty" required />
+                          <input aria-label={`Batch number for ${item.name}`} name="batch_number" maxLength={100} placeholder="Batch" required />
+                          <input aria-label={`Expiry date for ${item.name}`} name="expires_on" type="date" min={today} required />
+                          <input aria-label={`Receipt reference for ${item.name}`} name="reference" maxLength={240} placeholder="Receipt ref" required />
                           <button className="button button-quiet" type="submit" disabled={action.busy}>Receive</button>
                         </form>
                       </td>}
                     </tr>
                   ))}
-                  {!stock.length && <tr><td colSpan={manager ? 5 : 4} className="department-empty">No stock items have been added.</td></tr>}
+                  {!stock.length && <tr><td colSpan={manager ? 6 : 5} className="department-empty">No stock items have been added.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -762,31 +865,64 @@ export default function DepartmentWorkspace({
             <div className="panel-heading"><h3>Test orders & results</h3><span>{laboratoryOrders.length} recent</span></div>
             <div className="department-table-wrap">
               <table className="department-table">
-                <thead><tr><th>Patient</th><th>Test / specimen</th><th>Priority</th><th>Status / result</th>{manager && <th>Record result</th>}</tr></thead>
+                <thead><tr><th>Patient</th><th>Test / specimen</th><th>Priority</th><th>Sample status</th><th>Result / review</th><th>Actions</th></tr></thead>
                 <tbody>
                   {laboratoryOrders.map((order) => (
                     <tr key={order.id}>
                       <td><PatientLabel patient={order.patient} /></td>
                       <td><strong>{order.test_name}</strong><small>{order.specimen}</small></td>
                       <td>{order.priority}</td>
-                      <td><span className={`department-status ${order.status === "resulted" ? "status-done" : "status-pending"}`}>{order.status}</span>{order.result && <small>{order.result}</small>}</td>
-                      {manager && <td>{order.status === "requested" ? (
-                        <form className="department-inline-form" onSubmit={(event) => {
-                          event.preventDefault();
-                          const form = new FormData(event.currentTarget);
-                          void action.run(
-                            () => api.post(`/laboratory/orders/${order.id}/result`, { result: form.get("result") }),
-                            "Laboratory result recorded.",
-                          );
-                          event.currentTarget.reset();
-                        }}>
-                          <input name="result" aria-label={`Result for ${order.test_name}`} maxLength={10000} placeholder="Enter result" required />
-                          <button className="button button-quiet" type="submit" disabled={action.busy}>Save</button>
-                        </form>
-                      ) : "—"}</td>}
+                      <td><span className={`department-status ${order.sample_status === "resulted" ? "status-done" : order.sample_status === "rejected" ? "status-warning" : "status-pending"}`}>{order.sample_status.replaceAll("_", " ")}</span></td>
+                      <td>
+                        {order.result ? <><span>{order.result}</span><small className={order.review_status === "awaiting_review" ? "department-status status-warning" : "department-status status-done"}>{order.review_status === "awaiting_review" ? "Awaiting clinician review" : order.review_status}</small></> : "No result yet"}
+                        {order.review_notes && <small>Review note: {order.review_notes}</small>}
+                      </td>
+                      <td>
+                        {manager && order.status === "requested" && order.sample_status === "awaiting_collection" && (
+                          <button className="button button-quiet" type="button" disabled={action.busy} onClick={() => void action.run(
+                            () => api.patch(`/laboratory/orders/${order.id}/sample`, { status: "collected" }),
+                            "Sample marked as collected.",
+                          )}>Mark collected</button>
+                        )}
+                        {manager && order.status === "requested" && order.sample_status === "collected" && (
+                          <button className="button button-quiet" type="button" disabled={action.busy} onClick={() => void action.run(
+                            () => api.patch(`/laboratory/orders/${order.id}/sample`, { status: "processing" }),
+                            "Sample moved to processing.",
+                          )}>Start processing</button>
+                        )}
+                        {manager && order.status === "requested" && ["collected", "processing"].includes(order.sample_status) && (
+                          <form className="department-inline-form" onSubmit={(event) => {
+                            event.preventDefault();
+                            const form = new FormData(event.currentTarget);
+                            void action.run(
+                              () => api.post(`/laboratory/orders/${order.id}/result`, { result: form.get("result") }),
+                              "Laboratory result recorded and flagged for clinician review.",
+                            );
+                            event.currentTarget.reset();
+                          }}>
+                            <input name="result" aria-label={`Result for ${order.test_name}`} maxLength={10000} placeholder="Enter result" required />
+                            <button className="button button-quiet" type="submit" disabled={action.busy}>Save result</button>
+                          </form>
+                        )}
+                        {canReviewLabResult && order.review_status === "awaiting_review" && (
+                          <form className="department-inline-form" onSubmit={(event) => {
+                            event.preventDefault();
+                            const form = new FormData(event.currentTarget);
+                            void action.run(
+                              () => api.post(`/laboratory/orders/${order.id}/review`, { notes: form.get("review_notes") || null }),
+                              "Laboratory result reviewed.",
+                            );
+                            event.currentTarget.reset();
+                          }}>
+                            <input name="review_notes" aria-label={`Review note for ${order.test_name}`} maxLength={2000} placeholder="Optional review note" />
+                            <button className="button button-quiet" type="submit" disabled={action.busy}>Mark reviewed</button>
+                          </form>
+                        )}
+                        {(!manager || order.status !== "requested") && !(canReviewLabResult && order.review_status === "awaiting_review") && "—"}
+                      </td>
                     </tr>
                   ))}
-                  {!laboratoryOrders.length && <tr><td colSpan={manager ? 5 : 4} className="department-empty">No laboratory orders yet.</td></tr>}
+                  {!laboratoryOrders.length && <tr><td colSpan={6} className="department-empty">No laboratory orders yet.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -961,6 +1097,16 @@ export default function DepartmentWorkspace({
                   {visibleInvoices.map((invoice) => {
                     const details = invoice.billing_details;
                     const status = effectiveInvoiceStatus(invoice, today);
+                    const claim = invoice.insurance_claim;
+                    const nextClaimStatuses = claim
+                      ? {
+                          draft: ["submitted"],
+                          submitted: ["approved", "denied"],
+                          denied: ["submitted"],
+                          approved: ["paid"],
+                          paid: [],
+                        }[claim.status]
+                      : [];
                     return (
                     <tr key={invoice.id}>
                       <td><strong>{invoice.invoice_number}</strong><PatientLabel patient={invoice.patient} /></td>
@@ -994,6 +1140,50 @@ export default function DepartmentWorkspace({
                         </form>
                       ) : "—"}</td>}
                       <td>
+                        {details?.payer_type === "insurance" ? (
+                          claim ? (
+                            <div className="billing-claim-controls">
+                              <strong>{claim.claim_number}</strong>
+                              <span className={`department-status ${claim.status === "paid" || claim.status === "approved" ? "status-done" : claim.status === "denied" ? "status-warning" : "status-pending"}`}>{claim.status}</span>
+                              {claim.external_claim_reference && <small>Insurer ref: {claim.external_claim_reference}</small>}
+                              {canIssueInvoice && nextClaimStatuses.length > 0 && (
+                                <form className="department-inline-form" onSubmit={(event) => {
+                                  event.preventDefault();
+                                  const form = new FormData(event.currentTarget);
+                                  void action.run(
+                                    () => api.patch(`/billing/claims/${claim.id}`, {
+                                      status: form.get("status"),
+                                      external_claim_reference: form.get("external_claim_reference") || null,
+                                      notes: form.get("notes") || null,
+                                    }),
+                                    "Insurance claim updated.",
+                                  );
+                                }}>
+                                  <select name="status" aria-label="Next insurance claim status" defaultValue={nextClaimStatuses[0]}>
+                                    {nextClaimStatuses.map((nextStatus) => <option key={nextStatus} value={nextStatus}>{nextStatus.replaceAll("_", " ")}</option>)}
+                                  </select>
+                                  <input name="external_claim_reference" aria-label="Insurer claim reference" maxLength={120} placeholder="Insurer claim ref" defaultValue={claim.external_claim_reference ?? ""} />
+                                  <input name="notes" aria-label="Claim notes" maxLength={2000} placeholder="Claim notes" defaultValue={claim.notes ?? ""} />
+                                  <button className="button button-quiet" type="submit" disabled={action.busy}>Update</button>
+                                </form>
+                              )}
+                            </div>
+                          ) : canIssueInvoice ? (
+                            <button
+                              className="button button-quiet"
+                              type="button"
+                              disabled={action.busy}
+                              onClick={() => void action.run(
+                                () => api.post(`/billing/invoices/${invoice.id}/claims`, {}),
+                                "Insurance claim created.",
+                              )}
+                            >
+                              Start claim
+                            </button>
+                          ) : "No claim recorded"
+                        ) : "—"}
+                      </td>
+                      <td>
                         <details className="billing-invoice-details">
                           <summary>View / print</summary>
                           <div className="billing-invoice-detail-body">
@@ -1010,7 +1200,7 @@ export default function DepartmentWorkspace({
                                 </li>
                               )) : <li><span>{invoice.description}</span><strong>{formatCurrency(Number(invoice.total_amount))}</strong></li>}
                             </ul>
-                            <button className="button button-quiet" type="button" onClick={() => setPrintInvoiceId(invoice.id)}>Print invoice</button>
+                            <button className="button button-quiet" type="button" onClick={() => { setPrintReceipt(null); setPrintInvoiceId(invoice.id); }}>Print invoice</button>
                           </div>
                         </details>
                       </td>
@@ -1023,7 +1213,9 @@ export default function DepartmentWorkspace({
                                 <li key={payment.id}>
                                   <strong>{formatCurrency(Number(payment.amount))}</strong>
                                   <span>{payment.method.replaceAll("_", " ")} · {new Date(payment.paid_at).toLocaleString()}</span>
+                                  {payment.receipt_number && <small>Receipt: {payment.receipt_number}</small>}
                                   {payment.reference && <small>Ref: {payment.reference}</small>}
+                                  {payment.receipt_number && <button className="button button-quiet" type="button" onClick={() => { setPrintInvoiceId(null); setPrintReceipt({ invoiceId: invoice.id, paymentId: payment.id }); }}>Print receipt</button>}
                                 </li>
                               ))}
                             </ul>
@@ -1032,12 +1224,13 @@ export default function DepartmentWorkspace({
                       </td>
                     </tr>
                   )})}
-                  {!visibleInvoices.length && <tr><td colSpan={manager ? 9 : 8} className="department-empty">{invoices.length ? "No invoices match these filters." : "No invoices yet."}</td></tr>}
+                  {!visibleInvoices.length && <tr><td colSpan={manager ? 10 : 9} className="department-empty">{invoices.length ? "No invoices match these filters." : "No invoices yet."}</td></tr>}
                 </tbody>
               </table>
             </div>
           </section>
           {invoiceToPrint && <InvoicePrintSheet invoice={invoiceToPrint} />}
+          {receiptInvoice && receiptPayment && <PaymentReceiptSheet invoice={receiptInvoice} payment={receiptPayment} />}
         </>
       )}
 

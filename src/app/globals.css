@@ -279,7 +279,16 @@ h2 { color: #233832; font-size: 14px; margin: 0; }
 .priority-text-urgent { color: #a57832; }.priority-text-urgent i { background: #e5a945; }.priority-text-emergency { color: #ad514b; }.priority-text-emergency i { background: #d56a61; }
 .queue-arrival { color: #53665d; display: flex; flex-direction: column; font-size: 10px; font-weight: 700; }
 .queue-arrival span { color: #a0aaa5; font-size: 8px; font-weight: 400; margin-top: 3px; }
+.queue-handoff-form { align-items: center; display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; }
+.queue-handoff-form select, .queue-handoff-form input { background: #fff; border: 1px solid #e0e9e4; border-radius: 5px; color: #455951; font-size: 9px; min-height: 27px; padding: 0 6px; }
+.queue-handoff-form input { min-width: 115px; width: 140px; }
+.queue-handoff-error { color: #994b43; flex-basis: 100%; font-size: 8px; text-align: right; }
 .queue-footnote { align-items: center; color: #8b9992; display: flex; font-size: 9px; gap: 7px; padding: 14px 2px; }
+.audit-event-row { border-top: 1px solid #eff3f0; display: grid; gap: 8px 18px; grid-template-columns: minmax(180px, 1fr) minmax(150px, .7fr); padding: 14px 18px; }
+.audit-event-row > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.audit-event-row strong { color: #43554d; font-size: 10px; }
+.audit-event-row span, .audit-event-row small { color: #8d9b94; font-size: 8px; overflow-wrap: anywhere; }
+.audit-event-row > small { grid-column: 1 / -1; }
 
 .alert { align-items: center; border: 1px solid transparent; border-radius: 7px; display: flex; font-size: 10px; gap: 4px; justify-content: space-between; margin-bottom: 16px; padding: 10px 13px; }
 .alert-error { background: #fff0ee; border-color: #f4d0cb; color: #994b43; }
@@ -3752,6 +3761,10 @@ h1 { font-size: clamp(27px, 2.4vw, 34px); }
 .billing-invoice-filters select { background: var(--white); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font: inherit; min-height: 38px; padding: 0 10px; }
 .billing-invoice-details { min-width: 130px; }
 .billing-invoice-details summary { color: var(--primary); cursor: pointer; font-weight: 700; white-space: nowrap; }
+.billing-claim-controls { display: grid; gap: 5px; min-width: 170px; }
+.billing-claim-controls > strong { color: var(--text); font-size: 11px; }
+.billing-claim-controls > small { color: var(--text-muted); }
+.billing-claim-controls .department-inline-form { min-width: 170px; }
 .billing-invoice-detail-body { display: grid; gap: 8px; min-width: 280px; padding: 10px 0; }
 .billing-invoice-lines { border-top: 1px solid var(--border); display: grid; gap: 8px; list-style: none; margin: 2px 0; padding: 10px 0 0; }
 .billing-invoice-lines li { align-items: start; display: flex; gap: 12px; justify-content: space-between; }
