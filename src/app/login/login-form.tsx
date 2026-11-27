@@ -8,6 +8,7 @@ export default function LoginForm({ googleEnabled }: { googleEnabled: boolean })
   const router = useRouter();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [passwordVisible, setPasswordVisible] = useState(false);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -190,11 +191,21 @@ export default function LoginForm({ googleEnabled }: { googleEnabled: boolean })
               <input
                 id="password"
                 name="password"
-                type="password"
+                type={passwordVisible ? "text" : "password"}
                 autoComplete="current-password"
                 placeholder="Enter your password"
                 required
               />
+              <button
+                type="button"
+                className="auth-password-toggle"
+                aria-label={passwordVisible ? "Hide password" : "Show password"}
+                aria-controls="password"
+                aria-pressed={passwordVisible}
+                onClick={() => setPasswordVisible((visible) => !visible)}
+              >
+                {passwordVisible ? "Hide" : "Show"}
+              </button>
             </div>
             {error && <p className="auth-error" role="alert">{error}</p>}
             <button className="primary-button" type="submit" disabled={busy}>

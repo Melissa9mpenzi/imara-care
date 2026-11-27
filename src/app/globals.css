@@ -2845,6 +2845,24 @@ h1 { font-size: clamp(27px, 2.4vw, 34px); }
   width: 100%;
 }
 
+.auth-password-toggle {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #177c75;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 2px;
+}
+
+.auth-password-toggle:focus-visible {
+  outline: 2px solid #177c75;
+  outline-offset: 2px;
+}
+
 .auth-input-wrap input::placeholder {
   color: #a1adb5;
   opacity: 1;
